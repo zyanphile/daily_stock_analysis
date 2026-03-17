@@ -18,7 +18,7 @@ import json as _json
 import logging
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Tuple, List, Dict, Any
 
 import pandas as pd
@@ -103,7 +103,8 @@ class TushareFetcher(BaseFetcher):
         self._call_count = 0  # 当前分钟内的调用次数
         self._minute_start: Optional[float] = None  # 当前计数周期开始时间
         self._api: Optional[object] = None  # Tushare API 实例
-        self.date_list = None # 交易日列表缓存
+        self.date_list: Optional[List[str]] = None  # 交易日列表缓存（倒序，最新日期在前）
+        self._date_list_end: Optional[str] = None  # 缓存对应的截止日期，用于跨日刷新
 
         # 尝试初始化 API
         self._init_api()
@@ -250,6 +251,61 @@ class TushareFetcher(BaseFetcher):
         # 增加调用计数
         self._call_count += 1
         logger.debug(f"Tushare 当前分钟调用次数: {self._call_count}/{self.rate_limit_per_minute}")
+
+    def _call_api_with_rate_limit(self, method_name: str, **kwargs) -> pd.DataFrame:
+        """统一通过速率限制包装 Tushare API 调用。"""
+        if self._api is None:
+            raise DataFetchError("Tushare API 未初始化，请检查 Token 配置")
+
+        self._check_rate_limit()
+        method = getattr(self._api, method_name)
+        return method(**kwargs)
+
+    def _get_china_now(self) -> datetime:
+        """返回上海时区当前时间，方便测试覆盖跨日刷新逻辑。"""
+        return datetime.now(ZoneInfo("Asia/Shanghai"))
+
+    def _get_trade_dates(self, end_date: Optional[str] = None) -> List[str]:
+        """按自然日刷新交易日历缓存，避免服务跨日后继续复用旧日历。"""
+        if self._api is None:
+            return []
+
+        china_now = self._get_china_now()
+        requested_end_date = end_date or china_now.strftime("%Y%m%d")
+
+        if self.date_list is not None and self._date_list_end == requested_end_date:
+            return self.date_list
+
+        start_date = (china_now - timedelta(days=20)).strftime("%Y%m%d")
+        df_cal = self._call_api_with_rate_limit(
+            "trade_cal",
+            exchange="SSE",
+            start_date=start_date,
+            end_date=requested_end_date,
+        )
+
+        if df_cal is None or df_cal.empty or "cal_date" not in df_cal.columns:
+            logger.warning("[Tushare] trade_cal 返回为空，无法更新交易日历缓存")
+            self.date_list = []
+            self._date_list_end = requested_end_date
+            return self.date_list
+
+        trade_dates = sorted(
+            df_cal[df_cal["is_open"] == 1]["cal_date"].astype(str).tolist(),
+            reverse=True,
+        )
+        self.date_list = trade_dates
+        self._date_list_end = requested_end_date
+        return trade_dates
+
+    @staticmethod
+    def _pick_trade_date(trade_dates: List[str], use_today: bool) -> Optional[str]:
+        """根据可用交易日列表选择当天或前一交易日。"""
+        if not trade_dates:
+            return None
+        if use_today or len(trade_dates) == 1:
+            return trade_dates[0]
+        return trade_dates[1]
     
     def _convert_stock_code(self, stock_code: str) -> str:
         """
@@ -718,22 +774,18 @@ class TushareFetcher(BaseFetcher):
             return None
 
         try:
-            self._check_rate_limit()
             logger.info("[Tushare] ts.pro_api() 获取市场统计...")
             
             # 获取当前中国时间，判断是否在交易时间内
-            china_now = datetime.now(ZoneInfo("Asia/Shanghai"))
+            china_now = self._get_china_now()
             current_clock = china_now.strftime("%H:%M")
             current_date = china_now.strftime("%Y%m%d")
 
-            if self.date_list is None:
-                start_date = (datetime.now() - pd.Timedelta(days=20)).strftime('%Y%m%d')
-                df_cal = self._api.trade_cal(exchange='SSE', start_date=start_date, end_date=current_date)
+            trade_dates = self._get_trade_dates(current_date)
+            if not trade_dates:
+                return None
 
-                # 过滤出 is_open == 1 (开市) 的日期，并转换为列表
-                self.date_list = df_cal[df_cal['is_open'] == 1]['cal_date'].tolist()
-
-            if current_date in self.date_list:
+            if current_date in trade_dates:
                 if current_clock < '09:30' or current_clock > '16:30':
                     use_realtime = False
                 else:
@@ -744,7 +796,7 @@ class TushareFetcher(BaseFetcher):
             # 若实盘的时候使用 则使用其他可以实盘获取的数据源 akshare、efinance
             if use_realtime:
                 try:
-                    df = self._api.rt_k(ts_code='3*.SZ,6*.SH,0*.SZ,92*.BJ')
+                    df = self._call_api_with_rate_limit("rt_k", ts_code='3*.SZ,6*.SH,0*.SZ,92*.BJ')
                     if df is not None and not df.empty:
                         return self._calc_market_stats(df)
                     
@@ -753,21 +805,29 @@ class TushareFetcher(BaseFetcher):
                     return None
             else:
 
-                if current_date not in self.date_list:
-                    last_date = self.date_list[0] # 拿最近的日期
+                if current_date not in trade_dates:
+                    last_date = self._pick_trade_date(trade_dates, use_today=True)  # 拿最近的日期
                 else:
                     if current_clock < '09:30': 
-                        last_date = self.date_list[1] # 拿取前一天的数据
+                        last_date = self._pick_trade_date(trade_dates, use_today=False)  # 拿取前一天的数据
                     else:  # 即 '> 16:30'                  
-                        last_date = self.date_list[0] # 拿取当天的数据
+                        last_date = self._pick_trade_date(trade_dates, use_today=True)  # 拿取当天的数据
+
+                if last_date is None:
+                    return None
 
                 try:
-                    df = self._api.daily(TS_CODE='3*.SZ,6*.SH,0*.SZ,92*.BJ',start_date=last_date, end_date=last_date)
+                    df = self._call_api_with_rate_limit(
+                        "daily",
+                        ts_code='3*.SZ,6*.SH,0*.SZ,92*.BJ',
+                        start_date=last_date,
+                        end_date=last_date,
+                    )
                     # 为防止不同接口返回的列名大小写不一致（例如 rt_k 返回小写，daily 返回大写），统一将列名转为小写
                     df.columns = [col.lower() for col in df.columns]
 
                     # 获取股票基础信息（包含代码和名称）
-                    df_basic = self._api.stock_basic(fields='ts_code,name')
+                    df_basic = self._call_api_with_rate_limit("stock_basic", fields='ts_code,name')
                     df = pd.merge(df, df_basic, on='ts_code', how='left')
                     # 将 daily的 amount 列的值乘以 1000 来和其他数据源保持一致
                     if 'amount' in df.columns:
@@ -874,7 +934,7 @@ class TushareFetcher(BaseFetcher):
                 
             return stats
 
-    def get_trade_time(self,early_time='09:30',late_time='16:30') -> Optional[Tuple[str, str, list]]:
+    def get_trade_time(self,early_time='09:30',late_time='16:30') -> Optional[str]:
         '''
         获取当前时间可以获得数据的开始时间日期
 
@@ -885,18 +945,15 @@ class TushareFetcher(BaseFetcher):
         Returns:
                 start_date: 可以获得数据的开始日期
         '''
-        china_now = datetime.now(ZoneInfo("Asia/Shanghai"))
+        china_now = self._get_china_now()
         china_date = china_now.strftime("%Y%m%d")
         china_clock = china_now.strftime("%H:%M")
-        
-        if self.date_list is None:
-            start_date = (datetime.now() - pd.Timedelta(days=20)).strftime('%Y%m%d')
-            df_cal = self._api.trade_cal(exchange='SSE', start_date=start_date, end_date=china_date)
 
-            # 过滤出 is_open == 1 (开市) 的日期，并转换为列表
-            self.date_list = df_cal[df_cal['is_open'] == 1]['cal_date'].tolist()
+        trade_dates = self._get_trade_dates(china_date)
+        if not trade_dates:
+            return None
 
-        if china_date in self.date_list:
+        if china_date in trade_dates:
             if  early_time < china_clock < late_time: # 使用上一个交易日数据的时间段
                 use_today = False
             else:
@@ -904,10 +961,11 @@ class TushareFetcher(BaseFetcher):
         else:
             use_today = False
 
-        if use_today:
-            start_date = self.date_list[0] # 当天
-        else:
-            start_date = self.date_list[1] # 前一天
+        start_date = self._pick_trade_date(trade_dates, use_today=use_today)
+        if start_date is None:
+            return None
+
+        if not use_today:
             logger.info(f"[Tushare] 当前时间 {china_clock} 可能无法获取当天筹码分布，尝试获取前一个交易日的数据 {start_date}")
 
         return start_date
@@ -941,11 +999,13 @@ class TushareFetcher(BaseFetcher):
 
         # 15:30之后才有当天数据
         start_date = self.get_trade_time(early_time='00:00', late_time='15:30')
+        if not start_date:
+            return None
 
         # 优先同花顺接口
         logger.info("[Tushare] ts.pro_api().moneyflow_ind_ths 获取板块排行(同花顺)...")
         try:
-            df = self._api.moneyflow_ind_ths(trade_date=start_date)
+            df = self._call_api_with_rate_limit("moneyflow_ind_ths", trade_date=start_date)
             if df is not None and not df.empty:
                 change_col = 'pct_change'
                 name = 'industry'
@@ -957,7 +1017,7 @@ class TushareFetcher(BaseFetcher):
         # 同花顺接口失败，降级尝试东财接口
         logger.info("[Tushare] ts.pro_api().moneyflow_ind_dc 获取板块排行(东财)...")
         try:
-            df = self._api.moneyflow_ind_dc(trade_date=start_date)
+            df = self._call_api_with_rate_limit("moneyflow_ind_dc", trade_date=start_date)
             if df is not None and not df.empty:
                 df = df[df['content_type'] == '行业']  # 过滤出行业板块
                 change_col = 'pct_change'
@@ -1002,12 +1062,27 @@ class TushareFetcher(BaseFetcher):
         try:
             # 19点之后才有当天数据
             start_date = self.get_trade_time(early_time='00:00', late_time='19:00') 
+            if not start_date:
+                return None
 
             ts_code = self._convert_stock_code(stock_code)
 
-            df = self._api.cyq_chips(ts_code=ts_code, start_date=start_date, end_date=start_date)
+            df = self._call_api_with_rate_limit(
+                "cyq_chips",
+                ts_code=ts_code,
+                start_date=start_date,
+                end_date=start_date,
+            )
             if df is not None and not df.empty:
-                current_price = self._api.daily(ts_code=ts_code, start_date=start_date, end_date=start_date).iloc[0]['close']
+                daily_df = self._call_api_with_rate_limit(
+                    "daily",
+                    ts_code=ts_code,
+                    start_date=start_date,
+                    end_date=start_date,
+                )
+                if daily_df is None or daily_df.empty:
+                    return None
+                current_price = daily_df.iloc[0]['close']
                 metrics = self.compute_cyq_metrics(df, current_price)
 
                 chip = ChipDistribution(

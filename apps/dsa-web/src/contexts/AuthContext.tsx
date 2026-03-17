@@ -105,10 +105,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const logout = useCallback(async () => {
+    let logoutError: unknown = null;
     try {
       await authApi.logout();
+    } catch (err) {
+      logoutError = err;
     } finally {
       await fetchStatus();
+    }
+
+    if (logoutError && getParsedApiError(logoutError).status !== 401) {
+      throw logoutError;
     }
   }, [fetchStatus]);
 

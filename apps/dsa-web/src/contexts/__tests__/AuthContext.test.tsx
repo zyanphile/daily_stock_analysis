@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createApiError, createParsedApiError } from '../../api/error';
 import { AuthProvider, useAuth } from '../AuthContext';
 
 const { getStatus, login, changePassword, logout } = vi.hoisted(() => ({
@@ -84,6 +85,47 @@ describe('AuthContext', () => {
         passwordChangeable: false,
       });
     logout.mockResolvedValue(undefined);
+
+    render(
+      <AuthProvider>
+        <Probe />
+      </AuthProvider>
+    );
+
+    await screen.findByTestId('status');
+    fireEvent.click(screen.getByRole('button', { name: 'trigger-logout' }));
+
+    await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('logged-out'));
+  });
+
+  it('treats a 401 logout as already signed out after status refresh', async () => {
+    getStatus
+      .mockResolvedValueOnce({
+        authEnabled: true,
+        loggedIn: true,
+        passwordSet: true,
+        passwordChangeable: true,
+        setupState: 'enabled',
+      })
+      .mockResolvedValueOnce({
+        authEnabled: true,
+        loggedIn: false,
+        passwordSet: true,
+        passwordChangeable: true,
+        setupState: 'enabled',
+      });
+    logout.mockRejectedValue(
+      createApiError(
+        createParsedApiError({
+          title: '未登录',
+          message: 'Login required',
+          rawMessage: 'Login required',
+          status: 401,
+          category: 'http_error',
+        }),
+        { response: { status: 401, data: { error: 'unauthorized' } } }
+      )
+    );
 
     render(
       <AuthProvider>
