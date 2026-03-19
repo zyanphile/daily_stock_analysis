@@ -397,7 +397,11 @@ def run_agent_loop(
             progress_callback({"type": "thinking", "step": step + 1, "message": thinking_msg})
 
         # --- LLM call ---
-        response = llm_adapter.call_with_tools(messages, tool_decls)
+        response = llm_adapter.call_with_tools(
+            messages,
+            tool_decls,
+            timeout=remaining_timeout,
+        )
         provider_used = response.provider
         total_tokens += (response.usage or {}).get("total_tokens", 0)
         m = getattr(response, "model", "") or response.provider
@@ -582,14 +586,43 @@ def _execute_tools(
         tc = tool_calls[0]
         if progress_callback:
             progress_callback({"type": "tool_start", "step": step, "tool": tc.name})
-        _, result_str, success, dur, cached = _exec_single(tc)
+        timeout_triggered = False
+        if tool_wait_timeout_seconds and tool_wait_timeout_seconds > 0:
+            pool = ThreadPoolExecutor(max_workers=1)
+            try:
+                future = pool.submit(_exec_single, tc)
+                try:
+                    _, result_str, success, dur, cached = future.result(timeout=tool_wait_timeout_seconds)
+                except FuturesTimeoutError:
+                    timeout_triggered = True
+                    future.cancel()
+                    timeout_label = f"{tool_wait_timeout_seconds:.2f}s"
+                    logger.warning("Tool '%s' timed out after %s at step %d", tc.name, timeout_label, step)
+                    result_str = json.dumps({
+                        "error": f"Tool execution timed out after {timeout_label}",
+                        "timeout": True,
+                    })
+                    success = False
+                    dur = round(tool_wait_timeout_seconds, 2)
+                    cached = False
+            finally:
+                pool.shutdown(wait=not timeout_triggered, cancel_futures=timeout_triggered)
+        else:
+            _, result_str, success, dur, cached = _exec_single(tc)
         if progress_callback:
             progress_callback({"type": "tool_done", "step": step, "tool": tc.name, "success": success, "duration": dur})
-        tool_calls_log.append({
+        log_entry = {
             "step": step, "tool": tc.name, "arguments": tc.arguments,
             "success": success, "duration": dur, "result_length": len(result_str),
             "cached": cached,
-        })
+        }
+        if tool_wait_timeout_seconds and tool_wait_timeout_seconds > 0 and not success:
+            try:
+                if json.loads(result_str).get("timeout") is True:
+                    log_entry["timeout"] = True
+            except (TypeError, ValueError, json.JSONDecodeError):
+                pass
+        tool_calls_log.append(log_entry)
         results.append({"tc": tc, "result_str": result_str})
     else:
         for tc in tool_calls:

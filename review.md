@@ -51,7 +51,9 @@
 
 当前分支已补齐：
 
+- LLM 调用会继承剩余 wall-clock timeout 预算；
 - single-agent 共享执行循环的 wall-clock timeout 预算；
+- 单工具步骤也会受工具等待超时约束；
 - tool fan-out `as_completed()` 的批次等待超时；
 - 超时后对未完成工具调用返回结构化错误结果，而不是无限等待；
 - multi-agent orchestrator 向下传递剩余预算，避免 stage 之间失控扩张。

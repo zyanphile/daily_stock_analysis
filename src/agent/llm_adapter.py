@@ -207,6 +207,7 @@ class LLMToolAdapter:
         messages: List[Dict[str, Any]],
         tools: List[dict],
         provider: Optional[str] = None,
+        timeout: Optional[float] = None,
     ) -> LLMResponse:
         """Send messages + tool declarations to LLM, return normalized response.
 
@@ -219,7 +220,7 @@ class LLMToolAdapter:
         Returns:
             LLMResponse with either content (final answer) or tool_calls.
         """
-        return self.call_completion(messages, tools=tools, provider=provider)
+        return self.call_completion(messages, tools=tools, provider=provider, timeout=timeout)
 
     def call_text(
         self,
