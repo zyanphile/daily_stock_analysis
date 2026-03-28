@@ -260,9 +260,27 @@ def test_sanitize_llm_log_preview_redacts_quoted_authorization_headers(raw_previ
     [
         ('{"x-api-key":"sk-live-123456"}', '{"x-api-key":"[REDACTED]"}'),
         ("{'x-api-key':'sk-live-123456'}", "{'x-api-key':'[REDACTED]'}"),
+        ('{"anthropic_api_key":"sk-live-123456"}', '{"anthropic_api_key":"[REDACTED]"}'),
+        ("{'anthropic_api_key':'sk-live-123456'}", "{'anthropic_api_key':'[REDACTED]'}"),
     ],
 )
 def test_sanitize_llm_log_preview_redacts_quoted_x_api_key_fields(raw_preview, expected_preview):
+    preview = _sanitize_llm_log_preview(raw_preview)
+
+    assert preview == expected_preview
+    assert "sk-live-123456" not in preview
+
+
+@pytest.mark.parametrize(
+    ("raw_preview", "expected_preview"),
+    [
+        ("OPENAI_API_KEY=sk-live-123456", "OPENAI_API_KEY=[REDACTED]"),
+        ('GEMINI_API_KEY="sk-live-123456"', 'GEMINI_API_KEY="[REDACTED]"'),
+    ],
+)
+def test_sanitize_llm_log_preview_redacts_provider_prefixed_api_key_assignments(
+    raw_preview, expected_preview
+):
     preview = _sanitize_llm_log_preview(raw_preview)
 
     assert preview == expected_preview
