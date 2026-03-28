@@ -1265,8 +1265,9 @@ class GeminiAnalyzer:
                 elapsed = time.time() - start_time
 
                 # 记录响应信息
+                actual_model_name = model_used or model_name
                 logger.info(
-                    f"[LLM返回] {model_name} 响应成功, 耗时 {elapsed:.2f}s, 响应长度 {len(response_text)} 字符"
+                    f"[LLM返回] {actual_model_name} 响应成功, 耗时 {elapsed:.2f}s, 响应长度 {len(response_text)} 字符"
                 )
                 if allow_content_preview:
                     logger.debug(_build_llm_log_preview("LLM返回 调试预览", response_text))

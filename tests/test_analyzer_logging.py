@@ -16,7 +16,11 @@ from src.analyzer import (
     GeminiAnalyzer,
     _should_log_llm_content_preview,
 )
-from src.logging_config import set_sensitive_log_preview_enabled
+from src.logging_config import (
+    is_sensitive_log_preview_enabled,
+    set_sensitive_log_preview_enabled,
+    setup_logging,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -39,7 +43,12 @@ def _make_config(*, log_level: str = "INFO", debug: bool = False) -> SimpleNames
     )
 
 
-def _make_analyzer(config: SimpleNamespace, prompt: str, response_text: str) -> GeminiAnalyzer:
+def _make_analyzer(
+    config: SimpleNamespace,
+    prompt: str,
+    response_text: str,
+    model_used: str = None,
+) -> GeminiAnalyzer:
     analyzer = GeminiAnalyzer.__new__(GeminiAnalyzer)
     analyzer._config_override = config
     analyzer._requested_skills = None
@@ -53,7 +62,7 @@ def _make_analyzer(config: SimpleNamespace, prompt: str, response_text: str) -> 
     analyzer._format_prompt = lambda *args, **kwargs: prompt
     analyzer._call_litellm = lambda *args, **kwargs: (
         response_text,
-        config.litellm_model,
+        model_used or config.litellm_model,
         {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
     )
     analyzer._build_market_snapshot = lambda *args, **kwargs: {"price": "123.45"}
@@ -76,6 +85,14 @@ def test_should_log_llm_content_preview_accepts_existing_debug_switches():
     set_sensitive_log_preview_enabled(True)
 
     assert _should_log_llm_content_preview(_make_config())
+
+
+def test_setup_logging_only_enables_sensitive_preview_for_explicit_debug_levels(tmp_path):
+    setup_logging(log_dir=str(tmp_path / "notset"), console_level=logging.NOTSET)
+    assert not is_sensitive_log_preview_enabled()
+
+    setup_logging(log_dir=str(tmp_path / "debug"), console_level=logging.DEBUG)
+    assert is_sensitive_log_preview_enabled()
 
 
 def test_analyze_does_not_log_prompt_or_response_preview_by_default(caplog, monkeypatch):
@@ -138,3 +155,24 @@ def test_analyze_logs_only_redacted_single_line_preview_in_debug_mode(caplog, mo
     assert "open-sesame" not in caplog.text
     assert "..." in prompt_preview
     assert "..." in response_preview
+
+
+def test_analyze_logs_actual_model_used_in_response_metadata(caplog, monkeypatch):
+    configured_model = "gemini/gemini-2.5-flash"
+    actual_model = "openai/gpt-4.1-mini"
+    analyzer = _make_analyzer(
+        _make_config(log_level="INFO"),
+        "prompt",
+        "response",
+        model_used=actual_model,
+    )
+    analyzer._config_override.litellm_model = configured_model
+    monkeypatch.setattr("src.analyzer.persist_llm_usage", lambda *args, **kwargs: None)
+
+    with caplog.at_level(logging.INFO, logger="src.analyzer"):
+        result = analyzer.analyze({"code": "600519", "stock_name": "贵州茅台"}, news_context=None)
+
+    assert result.model_used == actual_model
+    assert f"[LLM配置] 模型: {configured_model}" in caplog.text
+    assert f"[LLM返回] {actual_model} 响应成功" in caplog.text
+    assert f"[LLM返回] {configured_model} 响应成功" not in caplog.text

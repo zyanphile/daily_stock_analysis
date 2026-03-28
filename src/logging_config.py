@@ -88,7 +88,7 @@ def setup_logging(
         level = console_level
     else:
         level = logging.DEBUG if debug else logging.INFO
-    set_sensitive_log_preview_enabled(debug or level <= logging.DEBUG)
+    set_sensitive_log_preview_enabled(debug or level == logging.DEBUG)
 
     # 创建日志目录
     log_path = Path(log_dir)
