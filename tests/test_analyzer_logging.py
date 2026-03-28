@@ -128,12 +128,12 @@ def test_analyze_logs_only_redacted_single_line_preview_in_debug_mode(caplog, mo
     long_tail = "超长调试内容" * 80
     prompt = (
         "Authorization: Bearer raw-secret-token\n"
-        "api_key=sk-live-123456 password=hunter2\n"
+        f"api_key=sk-live-123456 password=秘密 你好 notes={long_tail}\n"
         f"{long_tail}"
     )
     response_text = (
         "email=user@example.com\n"
-        "session_id=abc123 password=open-sesame\n"
+        f"session_id=abc [] password=open sesame notes={long_tail}\n"
         f"{long_tail}"
     )
     analyzer = _make_analyzer(_make_config(log_level="DEBUG"), prompt, response_text)
@@ -155,15 +155,17 @@ def test_analyze_logs_only_redacted_single_line_preview_in_debug_mode(caplog, mo
     assert "Authorization=Bearer [REDACTED]" in prompt_preview
     assert "api_key=[REDACTED]" in prompt_preview
     assert "password=[REDACTED]" in prompt_preview
+    assert "notes=" in prompt_preview
     assert "[REDACTED_EMAIL]" in response_preview
     assert "session_id=[REDACTED]" in response_preview
     assert "password=[REDACTED]" in response_preview
+    assert "notes=" in response_preview
     assert "raw-secret-token" not in caplog.text
     assert "sk-live-123456" not in caplog.text
-    assert "hunter2" not in caplog.text
+    assert "秘密 你好" not in caplog.text
     assert "user@example.com" not in caplog.text
-    assert "abc123" not in caplog.text
-    assert "open-sesame" not in caplog.text
+    assert "abc []" not in caplog.text
+    assert "open sesame" not in caplog.text
     assert "..." in prompt_preview
     assert "..." in response_preview
 
@@ -297,6 +299,32 @@ def test_sanitize_llm_log_preview_redacts_entire_unquoted_assignment_values_with
     assert "abc,123" not in preview
     assert "abc;123" not in preview
     assert "秘密123" not in preview
+
+
+@pytest.mark.parametrize(
+    ("raw_preview", "expected_preview"),
+    [
+        ("password=秘密 你好", "password=[REDACTED]"),
+        ("password=abc []", "password=[REDACTED]"),
+        (
+            "password=秘密 你好 session_id=abc123",
+            "password=[REDACTED] session_id=[REDACTED]",
+        ),
+        (
+            "password=abc [] session_id=abc123",
+            "password=[REDACTED] session_id=[REDACTED]",
+        ),
+    ],
+)
+def test_sanitize_llm_log_preview_redacts_unquoted_assignment_value_tails_with_symbols_or_non_ascii(
+    raw_preview, expected_preview
+):
+    preview = _sanitize_llm_log_preview(raw_preview)
+
+    assert preview == expected_preview
+    assert "秘密 你好" not in preview
+    assert "abc []" not in preview
+    assert "abc123" not in preview
 
 
 def test_analyze_logs_actual_model_used_in_response_metadata(caplog, monkeypatch):

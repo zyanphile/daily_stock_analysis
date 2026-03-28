@@ -74,7 +74,7 @@ _LLM_SENSITIVE_PATTERNS = (
     ),
     (
         re.compile(
-            r"(?i)\b(api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|passwd|session[_-]?id)\b\s*[:=]\s*(?!['\"])([^\s]+(?:\s+(?!\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|passwd|session[_-]?id)\b\s*[:=])[A-Za-z0-9._~+/:=@#%?!$&,;-]+)*)"
+            r"(?i)\b(api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|passwd|session[_-]?id)\b\s*[:=]\s*(?!['\"])([^\s]+(?:\s+(?!(?:[\w.-]+|\"[^\"]+\"|'[^']+')\s*[:=])\S+)*)"
         ),
         r"\1=[REDACTED]",
     ),
