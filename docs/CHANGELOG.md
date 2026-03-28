@@ -62,6 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - 🧩 **Tushare 初始化不再强依赖本地 SDK 包** — `TushareFetcher` 现在直接使用内置 HTTP client 访问 Tushare Pro，不再在启动阶段先 `import tushare` 才能初始化；修复了 Docker、桌面打包或环境重建后因缺少 `tushare` 包而提前报 `No module named 'tushare'` 的问题，并补充对应回归测试。
 - ⚙️ **`daily_analysis` 工作流补齐 `DEEPSEEK_API_KEY` 映射** — GitHub Actions 每日分析工作流现在会正确透传 `DEEPSEEK_API_KEY`，避免云端任务配置了密钥却在运行时拿不到对应环境变量。
 - 🖥️ **历史列表过长股票名称截断与悬停展示**（fixes #815）— 历史列表中过长的股票名称, 现在会按字符类型自动截断（英文15/中文8/混合10字符），默认显示截断结果，悬停时展示完整名称；解决 1920x1080 分辨率下股票名称与右侧状态标签文字重叠的问题。新增 `stockName.ts` 工具函数并补充对应测试。
+- 🔐 **LLM prompt/response 日志默认不再输出正文预览**（fixes #877）— `GeminiAnalyzer` 不再在常规 INFO 日志中输出 prompt 或模型回复正文；仅在显式调试模式下输出单行、脱敏且截断后的受控预览，降低提示词、回复内容及常见凭据片段落入日志采集与共享链路的暴露风险，并补充对应回归测试。
 
 ### 文档
 
