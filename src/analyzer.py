@@ -89,11 +89,11 @@ _LLM_SENSITIVE_PATTERNS = (
         _replace_authorization_preview,
     ),
     (
-        re.compile(r'(?i)(["\'])(cookie)\1\s*([:=])\s*(["\'])(?:\\.|(?!\4).)*\4'),
+        re.compile(r'(?i)(["\'])(set-cookie|cookie)\1\s*([:=])\s*(["\'])(?:\\.|(?!\4).)*\4'),
         r"\1\2\1\3\4[REDACTED]\4",
     ),
     (
-        re.compile(r"(?i)\b(cookie)\s*[:=]\s*[^;\s]+(?:;[^\n\r]*)?"),
+        re.compile(r"(?i)\b(set-cookie|cookie)\s*[:=]\s*[^;\s]+(?:;[^\n\r]*)?"),
         r"\1=[REDACTED]",
     ),
     (

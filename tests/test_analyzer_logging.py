@@ -331,6 +331,8 @@ def test_sanitize_llm_log_preview_redacts_secret_and_token_fields(raw_preview, e
     [
         ('{"cookie":"csrftoken=xyz;foo=bar"}', '{"cookie":"[REDACTED]"}'),
         ("{'cookie':'csrftoken=xyz;foo=bar'}", "{'cookie':'[REDACTED]'}"),
+        ('{"set-cookie":"PHPSESSID=abc; Path=/"}', '{"set-cookie":"[REDACTED]"}'),
+        ("{'set-cookie':'PHPSESSID=abc; Path=/'}", "{'set-cookie':'[REDACTED]'}"),
     ],
 )
 def test_sanitize_llm_log_preview_redacts_quoted_cookie_headers(raw_preview, expected_preview):
@@ -338,6 +340,22 @@ def test_sanitize_llm_log_preview_redacts_quoted_cookie_headers(raw_preview, exp
 
     assert preview == expected_preview
     assert "csrftoken=xyz;foo=bar" not in preview
+    assert "PHPSESSID=abc; Path=/" not in preview
+
+
+@pytest.mark.parametrize(
+    ("raw_preview", "expected_preview"),
+    [
+        ("cookie: csrftoken=xyz; foo=bar", "cookie=[REDACTED]"),
+        ("Set-Cookie: PHPSESSID=abc; Path=/", "Set-Cookie=[REDACTED]"),
+    ],
+)
+def test_sanitize_llm_log_preview_redacts_unquoted_cookie_headers(raw_preview, expected_preview):
+    preview = _sanitize_llm_log_preview(raw_preview)
+
+    assert preview == expected_preview
+    assert "csrftoken=xyz; foo=bar" not in preview
+    assert "PHPSESSID=abc; Path=/" not in preview
 
 
 @pytest.mark.parametrize(
