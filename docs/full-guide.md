@@ -206,7 +206,7 @@ daily_stock_analysis/
 | 变量名 | 说明 | 必填 |
 |--------|------|:----:|
 | `WECHAT_WEBHOOK_URL` | 企业微信机器人 Webhook URL | 可选 |
-| `FEISHU_WEBHOOK_URL` | 飞书机器人 Webhook URL | 可选 |
+| `FEISHU_WEBHOOK_URL` | 飞书机器人 Webhook URL；若自定义机器人开启签名校验，需同时配置 `FEISHU_APP_SECRET` | 可选 |
 | `TELEGRAM_BOT_TOKEN` | Telegram Bot Token | 可选 |
 | `TELEGRAM_CHAT_ID` | Telegram Chat ID | 可选 |
 | `TELEGRAM_MESSAGE_THREAD_ID` | Telegram Topic ID | 可选 |
@@ -238,7 +238,7 @@ daily_stock_analysis/
 | 变量名 | 说明 | 必填 |
 |--------|------|:----:|
 | `FEISHU_APP_ID` | 飞书应用 ID | 可选 |
-| `FEISHU_APP_SECRET` | 飞书应用 Secret | 可选 |
+| `FEISHU_APP_SECRET` | 飞书应用 Secret；同时复用于飞书自定义机器人 webhook 签名密钥 | 可选 |
 | `FEISHU_FOLDER_TOKEN` | 飞书云盘文件夹 Token | 可选 |
 
 > 飞书云文档配置步骤：
@@ -575,6 +575,7 @@ crontab -e
 1. 在飞书群聊中添加"自定义机器人"
 2. 复制 Webhook URL
 3. 设置 `FEISHU_WEBHOOK_URL`
+4. 如果自定义机器人开启“签名校验”，额外设置 `FEISHU_APP_SECRET`；当前 webhook 签名与飞书应用 Secret 共用同一配置项
 
 ### Telegram
 

@@ -5,10 +5,14 @@
 职责：
 1. 通过 webhook 发送飞书消息
 """
+import base64
+import hashlib
+import hmac
 import logging
 from typing import Dict, Any
-import requests
 import time
+
+import requests
 
 from src.config import Config
 from src.formatters import format_feishu_markdown, chunk_content_by_max_bytes
@@ -27,9 +31,30 @@ class FeishuSender:
             config: 配置对象
         """
         self._feishu_url = getattr(config, 'feishu_webhook_url', None)
+        secret = getattr(config, 'feishu_app_secret', None)
+        self._feishu_app_secret = secret.strip() if isinstance(secret, str) else secret
         self._feishu_max_bytes = getattr(config, 'feishu_max_bytes', 20000)
         self._webhook_verify_ssl = getattr(config, 'webhook_verify_ssl', True)
-    
+
+    def _with_signature(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """为启用签名校验的飞书自定义机器人补充 timestamp/sign。"""
+        if not self._feishu_app_secret:
+            return payload
+
+        timestamp = str(int(time.time()))
+        string_to_sign = f"{timestamp}\n{self._feishu_app_secret}"
+        sign = base64.b64encode(
+            hmac.new(
+                string_to_sign.encode("utf-8"),
+                digestmod=hashlib.sha256,
+            ).digest()
+        ).decode("utf-8")
+
+        signed_payload = dict(payload)
+        signed_payload["timestamp"] = timestamp
+        signed_payload["sign"] = sign
+        return signed_payload
+
           
     def send_to_feishu(self, content: str) -> bool:
         """
@@ -115,12 +140,13 @@ class FeishuSender:
     def _send_feishu_message(self, content: str) -> bool:
         """发送单条飞书消息（优先使用 Markdown 卡片）"""
         def _post_payload(payload: Dict[str, Any]) -> bool:
+            request_payload = self._with_signature(payload)
             logger.debug(f"飞书请求 URL: {self._feishu_url}")
             logger.debug(f"飞书请求 payload 长度: {len(content)} 字符")
 
             response = requests.post(
                 self._feishu_url,
-                json=payload,
+                json=request_payload,
                 timeout=30,
                 verify=self._webhook_verify_ssl
             )

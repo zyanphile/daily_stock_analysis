@@ -853,7 +853,7 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
     },
     "FEISHU_APP_SECRET": {
         "title": "Feishu App Secret",
-        "description": "Feishu app bot App Secret.",
+        "description": "Feishu app bot App Secret; also used as the webhook signing secret when a custom bot enables signature verification.",
         "category": "notification",
         "data_type": "string",
         "ui_control": "password",

@@ -5,6 +5,9 @@ Unit tests for src.notification_sender module.
 Tests sender classes in isolation (config, request shape, error handling).
 Does not duplicate test_notification.py which tests NotificationService.send() flow.
 """
+import base64
+import hashlib
+import hmac
 import os
 import sys
 import unittest
@@ -47,6 +50,13 @@ def _response(status_code: int, json_body: Optional[dict] = None):
     if json_body is not None:
         resp.json.return_value = json_body
     return resp
+
+
+def _expected_feishu_sign(secret: str, timestamp: str) -> str:
+    string_to_sign = f"{timestamp}\n{secret}"
+    return base64.b64encode(
+        hmac.new(string_to_sign.encode("utf-8"), digestmod=hashlib.sha256).digest()
+    ).decode("utf-8")
 
 
 class TestDiscordSender(unittest.TestCase):
@@ -162,6 +172,9 @@ class TestFeishuSender(unittest.TestCase):
         sender = FeishuSender(cfg)
         result = sender.send_to_feishu("hello")
         self.assertTrue(result)
+        payload = mock_post.call_args.kwargs["json"]
+        self.assertNotIn("timestamp", payload)
+        self.assertNotIn("sign", payload)
 
     @mock.patch("src.notification_sender.feishu_sender.requests.post")
     def test_send_http_error_returns_false(self, mock_post):
@@ -170,6 +183,78 @@ class TestFeishuSender(unittest.TestCase):
         sender = FeishuSender(cfg)
         result = sender.send_to_feishu("hello")
         self.assertFalse(result)
+
+    @mock.patch("src.notification_sender.feishu_sender.time.time", return_value=1700000000)
+    @mock.patch("src.notification_sender.feishu_sender.requests.post")
+    def test_send_with_signed_webhook_includes_timestamp_and_sign(self, mock_post, mock_time):
+        mock_post.return_value = _response(200, {"code": 0})
+        cfg = _config(
+            feishu_webhook_url="https://feishu.example/hook",
+            feishu_app_secret="webhook-secret",
+        )
+        sender = FeishuSender(cfg)
+
+        result = sender.send_to_feishu("hello")
+
+        self.assertTrue(result)
+        payload = mock_post.call_args.kwargs["json"]
+        self.assertEqual(payload["timestamp"], "1700000000")
+        self.assertEqual(
+            payload["sign"],
+            _expected_feishu_sign("webhook-secret", "1700000000"),
+        )
+        self.assertEqual(payload["msg_type"], "interactive")
+        mock_time.assert_called()
+
+    @mock.patch("src.notification_sender.feishu_sender.time.sleep")
+    @mock.patch("src.notification_sender.feishu_sender.time.time", return_value=1700000000)
+    @mock.patch("src.notification_sender.feishu_sender.requests.post")
+    def test_chunked_send_with_signed_webhook_signs_every_chunk(self, mock_post, _mock_time, mock_sleep):
+        mock_post.return_value = _response(200, {"code": 0})
+        cfg = _config(
+            feishu_webhook_url="https://feishu.example/hook",
+            feishu_app_secret="chunk-secret",
+            feishu_max_bytes=120,
+        )
+        sender = FeishuSender(cfg)
+
+        result = sender.send_to_feishu("A" * 500)
+
+        self.assertTrue(result)
+        self.assertGreater(mock_post.call_count, 1)
+        expected_sign = _expected_feishu_sign("chunk-secret", "1700000000")
+        for call in mock_post.call_args_list:
+            payload = call.kwargs["json"]
+            self.assertEqual(payload["timestamp"], "1700000000")
+            self.assertEqual(payload["sign"], expected_sign)
+        mock_sleep.assert_called()
+
+    @mock.patch("src.notification_sender.feishu_sender.time.time", return_value=1700000000)
+    @mock.patch("src.notification_sender.feishu_sender.requests.post")
+    def test_text_fallback_with_signed_webhook_keeps_signature(self, mock_post, _mock_time):
+        mock_post.side_effect = [
+            _response(200, {"code": 999, "msg": "card failed"}),
+            _response(200, {"code": 0}),
+        ]
+        cfg = _config(
+            feishu_webhook_url="https://feishu.example/hook",
+            feishu_app_secret="fallback-secret",
+        )
+        sender = FeishuSender(cfg)
+
+        result = sender.send_to_feishu("hello")
+
+        self.assertTrue(result)
+        self.assertEqual(mock_post.call_count, 2)
+        expected_sign = _expected_feishu_sign("fallback-secret", "1700000000")
+        first_payload = mock_post.call_args_list[0].kwargs["json"]
+        second_payload = mock_post.call_args_list[1].kwargs["json"]
+        self.assertEqual(first_payload["msg_type"], "interactive")
+        self.assertEqual(first_payload["timestamp"], "1700000000")
+        self.assertEqual(first_payload["sign"], expected_sign)
+        self.assertEqual(second_payload["msg_type"], "text")
+        self.assertEqual(second_payload["timestamp"], "1700000000")
+        self.assertEqual(second_payload["sign"], expected_sign)
 
 
 class TestEmailSender(unittest.TestCase):

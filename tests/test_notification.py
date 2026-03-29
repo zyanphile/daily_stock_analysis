@@ -14,6 +14,9 @@ TODO:
     - 生成日报
 2. 添加 send_to_context 的测试
 """
+import base64
+import hashlib
+import hmac
 import os
 import sys
 import unittest
@@ -46,6 +49,13 @@ def _make_response(status_code: int, json: Optional[dict] = None) -> requests.Re
     if json:
         response.json = lambda: json
     return response
+
+
+def _expected_feishu_sign(secret: str, timestamp: str) -> str:
+    string_to_sign = f"{timestamp}\n{secret}"
+    return base64.b64encode(
+        hmac.new(string_to_sign.encode("utf-8"), digestmod=hashlib.sha256).digest()
+    ).decode("utf-8")
 
 
 class TestNotificationServiceSendToMethods(unittest.TestCase):
@@ -408,6 +418,34 @@ class TestNotificationServiceReportGeneration(unittest.TestCase):
 
         self.assertTrue(ok)
         mock_post.assert_called_once()
+
+    @mock.patch("src.notification_sender.feishu_sender.time.time", return_value=1700000000)
+    @mock.patch("src.notification.get_config")
+    @mock.patch("requests.post")
+    def test_send_to_feishu_via_notification_service_with_signed_webhook(
+        self,
+        mock_post: mock.MagicMock,
+        mock_get_config: mock.MagicMock,
+        _mock_time: mock.MagicMock,
+    ):
+        cfg = _make_config(
+            feishu_webhook_url="https://feishu.example",
+            feishu_app_secret="signed-secret",
+        )
+        mock_get_config.return_value = cfg
+        mock_post.return_value = _make_response(200, {"code": 0})
+
+        service = NotificationService()
+
+        ok = service.send("hello feishu")
+
+        self.assertTrue(ok)
+        payload = mock_post.call_args.kwargs["json"]
+        self.assertEqual(payload["timestamp"], "1700000000")
+        self.assertEqual(
+            payload["sign"],
+            _expected_feishu_sign("signed-secret", "1700000000"),
+        )
         
     @mock.patch("src.notification.get_config")
     @mock.patch("requests.post")
