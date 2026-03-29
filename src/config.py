@@ -406,6 +406,7 @@ def setup_env(override: bool = False):
                   Default is False to preserve behavior on initial load where
                   system environment variables take precedence.
     """
+    Config._capture_bootstrap_runtime_env_overrides()
     # src/config.py -> src/ -> root
     env_file = os.getenv("ENV_FILE")
     if env_file:
@@ -766,6 +767,8 @@ class Config:
             "SCHEDULE_RUN_IMMEDIATELY",
         }
     )
+    _BOOTSTRAP_RUNTIME_ENV_OVERRIDES_CAPTURED = False
+    _BOOTSTRAP_RUNTIME_ENV_OVERRIDES = frozenset()
 
     def __post_init__(self) -> None:
         _log = logging.getLogger(__name__)
@@ -821,6 +824,7 @@ class Config:
         2. WebUI 可写的运行期关键键允许持久化 `.env` 覆盖旧进程环境值
         3. 代码中的默认值
         """
+        cls._capture_bootstrap_runtime_env_overrides()
         preexisting_report_language = os.environ.get("REPORT_LANGUAGE")
 
         # 确保环境变量已加载
@@ -1076,6 +1080,11 @@ class Config:
             if schedule_run_immediately_env is not None
             else legacy_run_immediately
         )
+        schedule_time_value = cls._resolve_env_value(
+            'SCHEDULE_TIME',
+            default='18:00',
+            prefer_env_file=True,
+        )
 
         report_language_raw = cls._resolve_report_language_env_value(
             preexisting_report_language
@@ -1271,11 +1280,7 @@ class Config:
                 default='false',
                 prefer_env_file=True,
             ).lower() == 'true',
-            schedule_time=cls._resolve_env_value(
-                'SCHEDULE_TIME',
-                default='18:00',
-                prefer_env_file=True,
-            ),
+            schedule_time=(schedule_time_value or '18:00').strip() or '18:00',
             schedule_run_immediately=schedule_run_immediately,
             run_immediately=legacy_run_immediately,
             market_review_enabled=os.getenv('MARKET_REVIEW_ENABLED', 'true').lower() == 'true',
@@ -1685,12 +1690,65 @@ class Config:
 
         should_prefer_file = prefer_env_file or key in cls._WEBUI_RUNTIME_ENV_FILE_PRIORITY_KEYS
         if should_prefer_file and file_value is not None:
+            if env_value is not None and cls._has_bootstrap_runtime_env_override(key):
+                return env_value
             return file_value
         if env_value is not None:
             return env_value
         if file_value is not None:
             return file_value
         return default
+
+    @classmethod
+    def _normalize_runtime_env_override_value(
+        cls,
+        key: str,
+        value: Optional[str],
+    ) -> Optional[str]:
+        """Normalize runtime-mutable env values before override comparison."""
+        if value is None:
+            return None
+
+        text = str(value).strip()
+        if key in {"RUN_IMMEDIATELY", "SCHEDULE_ENABLED", "SCHEDULE_RUN_IMMEDIATELY"}:
+            return text.lower()
+        if key == "STOCK_LIST":
+            return ",".join(
+                part.strip().upper()
+                for part in text.split(",")
+                if part.strip()
+            )
+        return text
+
+    @classmethod
+    def _capture_bootstrap_runtime_env_overrides(cls) -> None:
+        """Remember startup env overrides so real process overrides keep winning."""
+        if cls._BOOTSTRAP_RUNTIME_ENV_OVERRIDES_CAPTURED:
+            return
+
+        explicit_overrides = set()
+        for key in cls._WEBUI_RUNTIME_ENV_FILE_PRIORITY_KEYS:
+            env_value = os.environ.get(key)
+            if env_value is None:
+                continue
+
+            file_value = cls._get_env_file_value(key)
+            if file_value is None:
+                explicit_overrides.add(key)
+                continue
+
+            normalized_env = cls._normalize_runtime_env_override_value(key, env_value)
+            normalized_file = cls._normalize_runtime_env_override_value(key, file_value)
+            if normalized_env != normalized_file:
+                explicit_overrides.add(key)
+
+        cls._BOOTSTRAP_RUNTIME_ENV_OVERRIDES = frozenset(explicit_overrides)
+        cls._BOOTSTRAP_RUNTIME_ENV_OVERRIDES_CAPTURED = True
+
+    @classmethod
+    def _has_bootstrap_runtime_env_override(cls, key: str) -> bool:
+        cls._capture_bootstrap_runtime_env_overrides()
+        return key in cls._BOOTSTRAP_RUNTIME_ENV_OVERRIDES
 
     @classmethod
     def _resolve_report_language_env_value(
@@ -1811,6 +1869,8 @@ class Config:
     def reset_instance(cls) -> None:
         """重置单例（主要用于测试）"""
         cls._instance = None
+        cls._BOOTSTRAP_RUNTIME_ENV_OVERRIDES_CAPTURED = False
+        cls._BOOTSTRAP_RUNTIME_ENV_OVERRIDES = frozenset()
 
     def has_searxng_enabled(self) -> bool:
         """Whether SearXNG fallback is enabled via self-hosted or public mode."""

@@ -141,10 +141,22 @@ class SystemConfigApiTestCase(unittest.TestCase):
         ).model_dump()
 
         self.assertTrue(payload["success"])
-        joined = " | ".join(payload["warnings"])
-        self.assertIn("RUN_IMMEDIATELY", joined)
-        self.assertIn("SCHEDULE_RUN_IMMEDIATELY", joined)
-        self.assertIn("不会自动重建 scheduler", joined)
+        run_warning = next(
+            warning
+            for warning in payload["warnings"]
+            if "RUN_IMMEDIATELY 已写入 .env" in warning
+        )
+        schedule_warning = next(
+            warning
+            for warning in payload["warnings"]
+            if "SCHEDULE_RUN_IMMEDIATELY" in warning
+        )
+
+        self.assertIn("非 schedule 模式", run_warning)
+        self.assertNotIn("以 schedule 模式", run_warning)
+        self.assertIn("不会自动重建 scheduler", schedule_warning)
+        self.assertIn("以 schedule 模式重新启动后生效", schedule_warning)
+        self.assertNotIn("它属于启动期单次运行配置", schedule_warning)
 
     def test_export_desktop_system_config_returns_raw_env_content(self) -> None:
         self.env_path.write_text(

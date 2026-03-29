@@ -121,6 +121,35 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
         self.assertFalse(config.schedule_run_immediately)
         self.assertTrue(config.run_immediately)
 
+    @patch.object(Config, "_parse_litellm_yaml", return_value=[])
+    def test_blank_schedule_time_falls_back_to_default(
+        self,
+        _mock_parse_yaml,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_path = Path(temp_dir) / ".env"
+            env_path.write_text(
+                "\n".join(
+                    [
+                        "STOCK_LIST=600519",
+                        "SCHEDULE_TIME=",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with patch.dict(
+                os.environ,
+                {
+                    "ENV_FILE": str(env_path),
+                },
+                clear=True,
+            ):
+                config = Config._load_from_env()
+
+        self.assertEqual(config.schedule_time, "18:00")
+
     @patch("src.config.setup_env")
     @patch.object(Config, "_parse_litellm_yaml", return_value=[])
     def test_report_language_prefers_preexisting_process_env_over_env_file(
@@ -166,12 +195,65 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
 
         self.assertEqual(config.report_language, "en")
 
-    @patch("src.config.setup_env")
     @patch.object(Config, "_parse_litellm_yaml", return_value=[])
-    def test_runtime_mutable_keys_prefer_env_file_over_preexisting_process_env(
+    def test_runtime_mutable_keys_prefer_updated_env_file_over_stale_bootstrap_env(
         self,
         _mock_parse_yaml,
-        _mock_setup_env,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_path = Path(temp_dir) / ".env"
+            env_path.write_text(
+                "\n".join(
+                    [
+                        "STOCK_LIST=600519",
+                        "SCHEDULE_ENABLED=false",
+                        "SCHEDULE_TIME=18:00",
+                        "RUN_IMMEDIATELY=true",
+                        "SCHEDULE_RUN_IMMEDIATELY=false",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with patch.dict(
+                os.environ,
+                {
+                    "ENV_FILE": str(env_path),
+                    "STOCK_LIST": "600519",
+                    "SCHEDULE_ENABLED": "false",
+                    "SCHEDULE_TIME": "18:00",
+                    "RUN_IMMEDIATELY": "true",
+                    "SCHEDULE_RUN_IMMEDIATELY": "false",
+                },
+                clear=True,
+            ):
+                Config._load_from_env()
+                env_path.write_text(
+                    "\n".join(
+                        [
+                            "STOCK_LIST=300750,TSLA",
+                            "SCHEDULE_ENABLED=true",
+                            "SCHEDULE_TIME=09:30",
+                            "RUN_IMMEDIATELY=false",
+                            "SCHEDULE_RUN_IMMEDIATELY=true",
+                        ]
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                config = Config._load_from_env()
+
+        self.assertEqual(config.stock_list, ["300750", "TSLA"])
+        self.assertTrue(config.schedule_enabled)
+        self.assertEqual(config.schedule_time, "09:30")
+        self.assertFalse(config.run_immediately)
+        self.assertTrue(config.schedule_run_immediately)
+
+    @patch.object(Config, "_parse_litellm_yaml", return_value=[])
+    def test_runtime_mutable_keys_preserve_explicit_process_env_overrides(
+        self,
+        _mock_parse_yaml,
     ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             env_path = Path(temp_dir) / ".env"
@@ -203,11 +285,11 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
             ):
                 config = Config._load_from_env()
 
-        self.assertEqual(config.stock_list, ["300750", "TSLA"])
-        self.assertTrue(config.schedule_enabled)
-        self.assertEqual(config.schedule_time, "09:30")
-        self.assertFalse(config.run_immediately)
-        self.assertTrue(config.schedule_run_immediately)
+        self.assertEqual(config.stock_list, ["600519"])
+        self.assertFalse(config.schedule_enabled)
+        self.assertEqual(config.schedule_time, "18:00")
+        self.assertTrue(config.run_immediately)
+        self.assertFalse(config.schedule_run_immediately)
 
     def test_parse_report_language_accepts_known_alias_without_warning(self) -> None:
         with self.assertNoLogs("src.config", level="WARNING"):

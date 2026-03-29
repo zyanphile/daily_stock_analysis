@@ -585,10 +585,11 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         self.assertIn("MAX_WORKERS=1", joined)
         self.assertIn("reload_now=false", joined)
 
-    def test_update_appends_startup_only_schedule_warning(self) -> None:
+    def test_update_appends_mode_specific_startup_warnings(self) -> None:
         response = self.service.update(
             config_version=self.manager.get_config_version(),
             items=[
+                {"key": "RUN_IMMEDIATELY", "value": "false"},
                 {"key": "SCHEDULE_ENABLED", "value": "true"},
                 {"key": "SCHEDULE_RUN_IMMEDIATELY", "value": "true"},
             ],
@@ -596,11 +597,23 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         )
 
         self.assertTrue(response["success"])
-        joined = " | ".join(response["warnings"])
-        self.assertIn("SCHEDULE_ENABLED", joined)
-        self.assertIn("SCHEDULE_RUN_IMMEDIATELY", joined)
-        self.assertIn("不会因为本次保存立即触发分析", joined)
-        self.assertIn("不会自动重建 scheduler", joined)
+        run_warning = next(
+            warning
+            for warning in response["warnings"]
+            if "RUN_IMMEDIATELY 已写入 .env" in warning
+        )
+        schedule_warning = next(
+            warning
+            for warning in response["warnings"]
+            if "SCHEDULE_ENABLED" in warning
+        )
+
+        self.assertIn("非 schedule 模式", run_warning)
+        self.assertNotIn("以 schedule 模式", run_warning)
+        self.assertIn("SCHEDULE_RUN_IMMEDIATELY", schedule_warning)
+        self.assertIn("不会自动重建 scheduler", schedule_warning)
+        self.assertIn("以 schedule 模式重新启动后生效", schedule_warning)
+        self.assertNotIn("它属于启动期单次运行配置", schedule_warning)
 
     def test_validate_rejects_comma_only_api_key(self) -> None:
         """Whitespace/comma-only api_key must fail validation (P2: parsed-segment check)."""

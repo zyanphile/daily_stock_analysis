@@ -449,8 +449,19 @@ class SystemConfigService:
                     )
                 )
 
-        startup_only_schedule_keys = submitted_keys & {
+        startup_only_run_keys = submitted_keys & {
             "RUN_IMMEDIATELY",
+        }
+        if startup_only_run_keys:
+            warnings.append(
+                (
+                    f"{', '.join(sorted(startup_only_run_keys))} 已写入 .env。"
+                    "它属于启动期单次运行配置：当前已运行的 WebUI/API 进程不会因为本次保存立即触发分析；"
+                    "请重启当前进程后，在非 schedule 模式下按新值生效。"
+                )
+            )
+
+        startup_only_schedule_keys = submitted_keys & {
             "SCHEDULE_ENABLED",
             "SCHEDULE_TIME",
             "SCHEDULE_RUN_IMMEDIATELY",
