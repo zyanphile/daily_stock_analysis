@@ -734,6 +734,7 @@ export const LLMChannelEditor: React.FC<LLMChannelEditorProps> = ({
 
   const prevChannelsRef = useRef(channelsFingerprint);
   const prevRuntimeRef = useRef(runtimeFingerprint);
+  const discoveryNonceRef = useRef<Record<number, number>>({});
 
   useEffect(() => {
     if (prevChannelsRef.current === channelsFingerprint && prevRuntimeRef.current === runtimeFingerprint) {
@@ -746,6 +747,7 @@ export const LLMChannelEditor: React.FC<LLMChannelEditorProps> = ({
     setVisibleKeys({});
     setTestStates({});
     setDiscoveryStates({});
+    discoveryNonceRef.current = {};
     setExpandedRows({});
     setSaveMessage(null);
     setIsCollapsed(false);
@@ -819,6 +821,7 @@ export const LLMChannelEditor: React.FC<LLMChannelEditorProps> = ({
       return next;
     });
     if (field !== 'models' && field !== 'enabled') {
+      discoveryNonceRef.current = { ...discoveryNonceRef.current, [index]: (discoveryNonceRef.current[index] || 0) + 1 };
       setDiscoveryStates((previous) => {
         if (!(index in previous)) {
           return previous;
@@ -835,6 +838,7 @@ export const LLMChannelEditor: React.FC<LLMChannelEditorProps> = ({
     setVisibleKeys({});
     setTestStates({});
     setDiscoveryStates({});
+    discoveryNonceRef.current = {};
     setExpandedRows({});
   };
 
@@ -864,6 +868,7 @@ export const LLMChannelEditor: React.FC<LLMChannelEditorProps> = ({
     });
     setTestStates({});
     setDiscoveryStates({});
+    discoveryNonceRef.current = {};
     setExpandedRows((prev) => ({ ...prev, [channels.length]: true }));
     setIsCollapsed(false);
   };
@@ -966,6 +971,9 @@ export const LLMChannelEditor: React.FC<LLMChannelEditorProps> = ({
   };
 
   const handleDiscoverModels = async (channel: ChannelConfig, index: number) => {
+    const nonce = (discoveryNonceRef.current[index] || 0) + 1;
+    discoveryNonceRef.current[index] = nonce;
+
     setDiscoveryStates((previous) => ({
       ...previous,
       [index]: {
@@ -983,6 +991,8 @@ export const LLMChannelEditor: React.FC<LLMChannelEditorProps> = ({
         apiKey: channel.apiKey,
       });
 
+      if (discoveryNonceRef.current[index] !== nonce) return;
+
       setDiscoveryStates((previous) => ({
         ...previous,
         [index]: {
@@ -994,6 +1004,8 @@ export const LLMChannelEditor: React.FC<LLMChannelEditorProps> = ({
         },
       }));
     } catch (error: unknown) {
+      if (discoveryNonceRef.current[index] !== nonce) return;
+
       const parsed = getParsedApiError(error);
       setDiscoveryStates((previous) => ({
         ...previous,
