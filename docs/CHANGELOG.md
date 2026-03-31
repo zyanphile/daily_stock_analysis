@@ -58,7 +58,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [改进] 🔎 **SerpAPI 正文补抓范围收敛** — 自然搜索结果不再逐条同步抓取网页正文；现在仅对极少数高位且摘要明显不足的结果，在更短超时预算内做延迟补抓，并优先复用 SerpAPI 已返回的结构化摘要，降低搜索链路尾延迟与慢站点放大风险。
 - [修复] A 股和中文股票名称场景下的相关资讯搜索恢复中文优先策略：`search_stock_news()` 现在会在首个 provider 主要返回英文资讯时继续尝试后续引擎，并将同批结果中的中文资讯排到前面；同时非美股查询不再默认沿用 Brave 的 `en/US` 区域语言偏好，避免更新后被英文新闻结果占满。
 - [修复] Docker 场景下 WebUI 保存 `STOCK_LIST`、`SCHEDULE_ENABLED`、`SCHEDULE_TIME`、`SCHEDULE_RUN_IMMEDIATELY`、`RUN_IMMEDIATELY` 后，`Config` 会优先读取持久化 `.env` 中的新值，避免被容器创建时注入的旧环境变量覆盖；系统设置接口也会明确提示这些调度开关仍属于启动期配置，不会在当前已运行进程中立即触发分析或重建 scheduler。
-- [修复] Docker 场景下 WebUI 保存 `STOCK_LIST`、`SCHEDULE_ENABLED`、`SCHEDULE_TIME`、`SCHEDULE_RUN_IMMEDIATELY`、`RUN_IMMEDIATELY` 后，系统设置重载与定时读取会继续使用保存到 `.env` 的最新值，同时保留显式进程环境变量在后续启动时的 override 语义；系统设置接口也会明确提示这些调度开关仍属于启动期配置，不会在当前已运行进程中立即触发分析或重建 scheduler。
 
 ## [3.11.0] - 2026-03-27
 

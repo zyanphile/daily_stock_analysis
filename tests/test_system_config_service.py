@@ -550,6 +550,18 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         self.assertTrue(response["success"])
         mock_reload_runtime_singletons.assert_called_once()
 
+    def test_update_with_reload_applies_updated_env_file_when_process_env_is_stale(self) -> None:
+        os.environ["STOCK_LIST"] = "600519,000001"
+
+        response = self.service.update(
+            config_version=self.manager.get_config_version(),
+            items=[{"key": "STOCK_LIST", "value": "300750,TSLA"}],
+            reload_now=True,
+        )
+
+        self.assertTrue(response["success"])
+        self.assertEqual(Config.get_instance().stock_list, ["300750", "TSLA"])
+
     def test_update_raises_conflict_for_stale_version(self) -> None:
         with self.assertRaises(ConfigConflictError):
             self.service.update(
