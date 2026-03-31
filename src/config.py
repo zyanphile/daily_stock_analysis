@@ -1851,17 +1851,19 @@ class Config:
                 field="STOCK_LIST",
             ))
         elif self.stock_email_groups:
+            from data_provider.base import normalize_stock_code
             configured_stock_set = {
-                (code or "").strip().upper()
+                normalize_stock_code(code)
                 for code in self.stock_list
                 if (code or "").strip()
             }
             missing_group_stocks_dict: Dict[str, None] = {}
             for stocks, _emails in self.stock_email_groups:
                 for stock in stocks:
-                    normalized_stock = (stock or "").strip().upper()
-                    if not normalized_stock:
+                    raw = (stock or "").strip()
+                    if not raw:
                         continue
+                    normalized_stock = normalize_stock_code(stock)
                     if normalized_stock in configured_stock_set:
                         continue
                     if normalized_stock in missing_group_stocks_dict:
