@@ -52,6 +52,18 @@ describe('ReportNews', () => {
     expect(screen.getByText('可稍后刷新以获取最新资讯。')).toBeInTheDocument();
   });
 
+  it('uses history-specific empty copy for saved report snapshots', async () => {
+    vi.mocked(historyApi.getNews).mockResolvedValue({
+      total: 0,
+      items: [],
+    });
+
+    render(<ReportNews recordId={1} isHistory />);
+
+    expect(await screen.findByText('暂无相关资讯')).toBeInTheDocument();
+    expect(screen.getByText('该历史记录未保存相关资讯；重新读取只会刷新当前快照。若要获取最新资讯，请重新发起一次分析。')).toBeInTheDocument();
+  });
+
   it('clarifies that history reports only reload the saved news snapshot', async () => {
     vi.mocked(historyApi.getNews).mockResolvedValue({
       total: 1,
