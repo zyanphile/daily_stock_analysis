@@ -491,6 +491,17 @@ class TestFundamentalContext(unittest.TestCase):
         self.assertIn("[board_value] pd.isna fallback", joined_logs)
         self.assertIn("[fundamental_payload] pd.isna fallback", joined_logs)
 
+    def test_missing_value_helpers_propagate_array_protocol_pd_isna_errors(self) -> None:
+        class _ArrayProtocolErrorPayload:
+            def __array__(self):
+                raise ValueError("boom")
+
+        payload = _ArrayProtocolErrorPayload()
+        with self.assertRaises(ValueError):
+            DataFetcherManager._is_missing_board_value(payload)
+        with self.assertRaises(ValueError):
+            DataFetcherManager._has_meaningful_payload(payload)
+
     def test_missing_value_helpers_propagate_unexpected_pd_isna_errors(self) -> None:
         sentinel = object()
         with patch("data_provider.base.pd.isna", side_effect=RuntimeError("boom")):

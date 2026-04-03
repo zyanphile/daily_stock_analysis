@@ -680,6 +680,14 @@ class DataFetcherManager:
         try:
             isna_result = pd.isna(value)
         except (TypeError, ValueError) as exc:
+            if hasattr(value, "__array__"):
+                logger.debug(
+                    "[%s] pd.isna failed for array-like object; re-raise: value_type=%s error_type=%s",
+                    context,
+                    type(value).__name__,
+                    type(exc).__name__,
+                )
+                raise
             logger.debug(
                 "[%s] pd.isna fallback: value_type=%s error_type=%s",
                 context,
@@ -1813,7 +1821,7 @@ class DataFetcherManager:
                 return False
             return any(
                 DataFetcherManager._has_meaningful_payload(v)
-                for v in payload.to_numpy().reshape(-1).tolist()
+                for v in payload.to_numpy().flat
             )
         if isinstance(payload, (pd.Series, pd.Index)):
             return any(DataFetcherManager._has_meaningful_payload(v) for v in payload.tolist())
@@ -1823,7 +1831,7 @@ class DataFetcherManager:
             else:
                 return any(
                     DataFetcherManager._has_meaningful_payload(v)
-                    for v in payload.reshape(-1).tolist()
+                    for v in payload.flat
                 )
         if isinstance(payload, (list, tuple, set)):
             return any(DataFetcherManager._has_meaningful_payload(v) for v in payload)
