@@ -2164,7 +2164,7 @@ class Config:
             has_feishu_app_credentials
             and not has_feishu_full_cloud_doc_credentials
             and not self.feishu_webhook_url
-            and not self.feishu_stream_enabled
+            and not (self.feishu_stream_enabled and has_feishu_app_id and has_feishu_app_secret)
         ):
             issues.append(ConfigIssue(
                 severity="warning",

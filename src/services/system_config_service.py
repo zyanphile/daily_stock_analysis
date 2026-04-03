@@ -856,7 +856,7 @@ class SystemConfigService:
             has_feishu_app_credentials
             and not has_feishu_full_cloud_doc_credentials
             and not has_feishu_webhook
-            and not feishu_stream_enabled
+            and not (feishu_stream_enabled and has_feishu_app_id and has_feishu_app_secret)
             and (updated_keys & feishu_relevant_keys)
         ):
             issues.append(

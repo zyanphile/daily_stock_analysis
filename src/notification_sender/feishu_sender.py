@@ -144,7 +144,11 @@ class FeishuSender:
         Returns:
             是否全部发送成功
         """
-        chunks = chunk_content_by_max_bytes(content, max_bytes, add_page_marker=True)
+        try:
+            chunks = chunk_content_by_max_bytes(content, max_bytes, add_page_marker=True)
+        except ValueError as e:
+            logger.error("飞书消息分片失败，单片预算不足以安全分页（关键词过长或 max_bytes 过小）: %s", e)
+            return False
         
         # 分批发送
         total_chunks = len(chunks)
