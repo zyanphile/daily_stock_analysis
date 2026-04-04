@@ -302,6 +302,7 @@ class LLMToolAdapter:
         started_at = time.time()
 
         last_error = None
+        hit_rate_limit = False
         for model in models_to_try:
             remaining_timeout = timeout
             if timeout is not None and timeout > 0:
@@ -320,12 +321,25 @@ class LLMToolAdapter:
                     max_tokens=max_tokens,
                     timeout=remaining_timeout,
                 )
+            except litellm.RateLimitError as e:
+                logger.warning("Agent LLM rate-limited on %s: %s", model, e)
+                last_error = e
+                hit_rate_limit = True
+                # Brief backoff before trying the next model; avoids hammering
+                # the same provider when multiple models share one account.
+                time.sleep(min(2.0, (time.time() - started_at) * 0.1 + 0.5))
+                continue
+            except litellm.ContextWindowExceededError as e:
+                logger.warning("Agent LLM context window exceeded on %s: %s", model, e)
+                last_error = e
+                continue
             except Exception as e:
-                logger.warning(f"Agent LLM call failed with {model}: {e}")
+                logger.warning("Agent LLM call failed with %s: %s", model, e)
                 last_error = e
                 continue
 
-        error_msg = f"All LLM models failed. Last error: {last_error}"
+        suffix = " (rate-limited)" if hit_rate_limit else ""
+        error_msg = f"All LLM models failed{suffix}. Last error: {last_error}"
         logger.error(error_msg)
         return LLMResponse(content=error_msg, provider="error")
 
