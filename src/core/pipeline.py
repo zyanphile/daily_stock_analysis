@@ -116,7 +116,7 @@ class StockAnalysisPipeline:
                 news_strategy_profile=getattr(self.config, "news_strategy_profile", "short"),
             )
         except Exception as exc:
-            logger.warning("搜索服务初始化失败，将以无搜索模式运行: %s", exc)
+            logger.warning("搜索服务初始化失败，将以无搜索模式运行: %s", exc, exc_info=True)
             self.search_service = None
         
         logger.info(f"调度器初始化完成，最大并发数: {self.max_workers}")
@@ -130,7 +130,9 @@ class StockAnalysisPipeline:
             logger.info("筹码分布分析已启用")
         else:
             logger.info("筹码分布分析已禁用")
-        if self.search_service is not None and self.search_service.is_available:
+        if self.search_service is None:
+            logger.warning("搜索服务未启用（初始化失败或依赖缺失）")
+        elif self.search_service.is_available:
             logger.info("搜索服务已启用")
         else:
             logger.warning("搜索服务未启用（未配置搜索能力）")
@@ -144,7 +146,11 @@ class StockAnalysisPipeline:
             if self.social_sentiment_service.is_available:
                 logger.info("Social sentiment service enabled (Reddit/X/Polymarket, US stocks only)")
         except Exception as exc:
-            logger.warning("社交舆情服务初始化失败，将跳过舆情分析: %s", exc)
+            logger.warning(
+                "社交舆情服务初始化失败，将跳过舆情分析: %s",
+                exc,
+                exc_info=True,
+            )
             self.social_sentiment_service = None
 
     def _emit_progress(self, progress: int, message: str) -> None:
@@ -155,7 +161,19 @@ class StockAnalysisPipeline:
         try:
             callback(progress, message)
         except Exception as exc:
-            logger.warning("[pipeline] progress callback failed: %s", exc)
+            query_id = getattr(self, "query_id", None)
+            logger.warning(
+                "[pipeline] progress callback failed: %s (progress=%s, message=%r, query_id=%s)",
+                exc,
+                progress,
+                message,
+                query_id,
+                extra={
+                    "progress": progress,
+                    "progress_message": message,
+                    "query_id": query_id,
+                },
+            )
 
     def fetch_and_save_stock_data(
         self, 
