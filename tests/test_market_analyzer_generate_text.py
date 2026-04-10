@@ -430,6 +430,7 @@ class TestMarketAnalyzerBypassFix:
         assert "A-share Market Recap" in result
         assert "### 1. Market Summary" in result
         assert "### 3. Breadth & Liquidity" in result
+        assert "Turnover (CNY 100m)" in result
         assert "### 4. Sector Highlights" in result
         assert "### 6. Strategy Framework" in result
         assert "### 一、市场总结" not in result
@@ -475,7 +476,8 @@ Sector text.
         result = ma._inject_data_into_review(review, overview)
 
         assert "Advancers **3200**" in result
-        assert "| Index | Last | Change % | Turnover |" in result
+        assert "Turnover **14567** (CNY 100m)" in result
+        assert "| Index | Last | Change % | Turnover (CNY 100m) |" in result
         assert "Leaders: **AI算力**(+3.25%)" in result
         assert "Laggards: **煤炭**(-1.12%)" in result
 

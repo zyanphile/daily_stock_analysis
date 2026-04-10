@@ -469,7 +469,7 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
                 f"> 📈 Advancers **{overview.up_count}** / Decliners **{overview.down_count}** / "
                 f"Flat **{overview.flat_count}** | "
                 f"Limit-up **{overview.limit_up_count}** / Limit-down **{overview.limit_down_count}** | "
-                f"Turnover **{overview.total_amount:.0f}** CNY bn"
+                f"Turnover **{overview.total_amount:.0f}** (CNY 100m)"
             )
         lines = [
             f"> 📈 上涨 **{overview.up_count}** 家 / 下跌 **{overview.down_count}** 家 / "
@@ -485,8 +485,8 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
             return ""
         if self._get_review_language() == "en":
             lines = [
-                "| Index | Last | Change % | Turnover |",
-                "|-------|------|----------|----------|",
+                "| Index | Last | Change % | Turnover (CNY 100m) |",
+                "|-------|------|----------|--------------------|",
             ]
         else:
             lines = [
@@ -563,7 +563,7 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
                 stats_block = f"""## Market Breadth
 - Advancers: {overview.up_count} | Decliners: {overview.down_count} | Flat: {overview.flat_count}
 - Limit-up: {overview.limit_up_count} | Limit-down: {overview.limit_down_count}
-- Turnover: {overview.total_amount:.0f} CNY bn"""
+- Turnover: {overview.total_amount:.0f} (CNY 100m)"""
             else:
                 stats_block = "## Market Breadth\n(No equivalent advance/decline statistics are available for this market.)"
 
@@ -780,7 +780,7 @@ Output the report content directly, no extra commentary.
 | Decliners | {overview.down_count} |
 | Limit-up | {overview.limit_up_count} |
 | Limit-down | {overview.limit_down_count} |
-| Turnover | {overview.total_amount:.0f} CNY bn |
+| Turnover (CNY 100m) | {overview.total_amount:.0f} |
 """
             sector_section = ""
             if self.profile.has_sector_rankings and (top_text or bottom_text):
