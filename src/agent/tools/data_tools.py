@@ -11,38 +11,26 @@ Tools:
 
 import logging
 from datetime import date
-from threading import Lock
 from typing import Optional
 
 from src.agent.tools.registry import ToolParameter, ToolDefinition
+from src.services.stock_history_cache import (
+    get_shared_fetcher_manager,
+    load_recent_history_df,
+    reset_shared_history_runtime,
+)
 
 logger = logging.getLogger(__name__)
 
-_fetcher_manager_singleton = None
-_fetcher_manager_lock = Lock()
-
 
 def _get_fetcher_manager():
-    """Return a module-level singleton DataFetcherManager.
-
-    Re-creating the manager on every tool call causes Tushare re-init overhead
-    (~2 s each) and prevents circuit-breaker cooldown from taking effect across
-    consecutive tool calls within the same agent run.
-    """
-    from data_provider import DataFetcherManager
-    global _fetcher_manager_singleton
-    if _fetcher_manager_singleton is None:
-        with _fetcher_manager_lock:
-            if _fetcher_manager_singleton is None:
-                _fetcher_manager_singleton = DataFetcherManager()
-    return _fetcher_manager_singleton
+    """Compatibility shim returning the shared history fetcher manager."""
+    return get_shared_fetcher_manager()
 
 
 def reset_fetcher_manager() -> None:
-    """Clear the cached DataFetcherManager so runtime config reloads take effect."""
-    global _fetcher_manager_singleton
-    with _fetcher_manager_lock:
-        _fetcher_manager_singleton = None
+    """Clear shared history runtime state so config reloads take effect."""
+    reset_shared_history_runtime()
 
 
 def _get_db():
@@ -234,8 +222,7 @@ get_realtime_quote_tool = ToolDefinition(
 
 def _handle_get_daily_history(stock_code: str, days: int = 60) -> dict:
     """Get daily OHLCV history data."""
-    manager = _get_fetcher_manager()
-    df, source = manager.get_daily_data(stock_code, days=days)
+    df, source = load_recent_history_df(stock_code, days=days)
 
     if df is None or df.empty:
         return {"error": f"No historical data available for {stock_code}"}

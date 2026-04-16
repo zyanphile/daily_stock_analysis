@@ -671,8 +671,11 @@ def _resolve_scheduled_stock_codes(stock_codes: Optional[List[str]]) -> Optional
 
 def _reload_runtime_config() -> Config:
     """Reload config from the latest persisted `.env` values for scheduled runs."""
+    from src.services.stock_history_cache import reset_shared_history_runtime
+
     _reload_env_file_values_preserving_overrides()
     Config.reset_instance()
+    reset_shared_history_runtime()
     return get_config()
 
 

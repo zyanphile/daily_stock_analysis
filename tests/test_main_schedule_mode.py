@@ -5,7 +5,6 @@ import logging
 import os
 import tempfile
 import unittest
-from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -246,6 +245,9 @@ class MainScheduleModeTestCase(unittest.TestCase):
         def fake_reset_instance() -> None:
             call_order.append("reset_instance")
 
+        def fake_reset_history_runtime() -> None:
+            call_order.append("reset_history")
+
         def fake_get_config():
             call_order.append("get_config")
             return runtime_config
@@ -257,13 +259,16 @@ class MainScheduleModeTestCase(unittest.TestCase):
             "main.Config.reset_instance",
             side_effect=fake_reset_instance,
         ), patch(
+            "src.services.stock_history_cache.reset_shared_history_runtime",
+            side_effect=fake_reset_history_runtime,
+        ), patch(
             "main.get_config",
             side_effect=fake_get_config,
         ):
             reloaded_config = main._reload_runtime_config()
 
         self.assertIs(reloaded_config, runtime_config)
-        self.assertEqual(call_order, ["reload_env", "reset_instance", "get_config"])
+        self.assertEqual(call_order, ["reload_env", "reset_instance", "reset_history", "get_config"])
 
     def test_schedule_time_provider_propagates_config_read_failures(self) -> None:
         with patch(

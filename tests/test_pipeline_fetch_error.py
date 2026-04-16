@@ -3,6 +3,7 @@
 
 from datetime import date, datetime, timezone
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from src.core.pipeline import StockAnalysisPipeline
@@ -46,6 +47,71 @@ class PipelineFetchErrorTestCase(unittest.TestCase):
         _mock_target.assert_called_once_with("600519", current_time=current_time)
         pipeline.db.has_today_data.assert_called_once_with("600519", date(2026, 3, 27))
         pipeline.fetcher_manager.get_daily_data.assert_not_called()
+
+    @patch.object(
+        StockAnalysisPipeline,
+        "_resolve_resume_target_date",
+        return_value=date(2026, 3, 27),
+    )
+    @patch("src.core.pipeline.ensure_min_history_cached", return_value=(True, "Database"))
+    def test_fetch_and_save_agent_mode_ensures_min_history_before_short_circuit(
+        self,
+        mock_ensure_history,
+        _mock_target,
+    ):
+        pipeline = StockAnalysisPipeline.__new__(StockAnalysisPipeline)
+        pipeline.fetcher_manager = MagicMock()
+        pipeline.db = MagicMock()
+        pipeline.config = SimpleNamespace(agent_mode=True, agent_skills=[])
+        pipeline.fetcher_manager.get_stock_name.return_value = "贵州茅台"
+        pipeline.db.has_today_data.return_value = True
+        current_time = datetime(2026, 3, 28, 1, 0, tzinfo=timezone.utc)
+
+        success, error = StockAnalysisPipeline.fetch_and_save_stock_data(
+            pipeline,
+            "600519",
+            current_time=current_time,
+        )
+
+        self.assertTrue(success)
+        self.assertIsNone(error)
+        mock_ensure_history.assert_called_once_with(
+            "600519",
+            240,
+            target_date=date(2026, 3, 27),
+            force_refresh=False,
+        )
+        pipeline.db.has_today_data.assert_not_called()
+
+    @patch.object(
+        StockAnalysisPipeline,
+        "_resolve_resume_target_date",
+        return_value=date(2026, 3, 27),
+    )
+    @patch("src.core.pipeline.ensure_min_history_cached")
+    def test_fetch_and_save_non_agent_path_keeps_existing_resume_check(
+        self,
+        mock_ensure_history,
+        _mock_target,
+    ):
+        pipeline = StockAnalysisPipeline.__new__(StockAnalysisPipeline)
+        pipeline.fetcher_manager = MagicMock()
+        pipeline.db = MagicMock()
+        pipeline.config = SimpleNamespace(agent_mode=False, agent_skills=[])
+        pipeline.fetcher_manager.get_stock_name.return_value = "贵州茅台"
+        pipeline.db.has_today_data.return_value = True
+        current_time = datetime(2026, 3, 28, 1, 0, tzinfo=timezone.utc)
+
+        success, error = StockAnalysisPipeline.fetch_and_save_stock_data(
+            pipeline,
+            "600519",
+            current_time=current_time,
+        )
+
+        self.assertTrue(success)
+        self.assertIsNone(error)
+        mock_ensure_history.assert_not_called()
+        pipeline.db.has_today_data.assert_called_once_with("600519", date(2026, 3, 27))
 
     def test_resolve_resume_target_date_normalizes_supported_a_share_formats(self):
         with patch("src.core.pipeline.get_market_for_stock", return_value="cn") as mock_market, patch(

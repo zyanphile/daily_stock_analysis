@@ -28,15 +28,17 @@ from data_provider import DataFetcherManager
 from data_provider.base import normalize_stock_code
 from data_provider.realtime_types import ChipDistribution
 from src.analyzer import GeminiAnalyzer, AnalysisResult, fill_chip_structure_if_needed, fill_price_position_if_needed
-from src.data.stock_mapping import STOCK_NAME_MAP
 from src.notification import NotificationService, NotificationChannel
 from src.report_language import (
-    get_unknown_text,
     localize_confidence_level,
     normalize_report_language,
 )
 from src.search_service import SearchService
 from src.services.social_sentiment_service import SocialSentimentService
+from src.services.stock_history_cache import (
+    AGENT_HISTORY_BASELINE_DAYS,
+    ensure_min_history_cached,
+)
 from src.enums import ReportType
 from src.stock_analyzer import StockTrendAnalyzer, TrendAnalysisResult
 from src.core.trading_calendar import (
@@ -176,6 +178,24 @@ class StockAnalysisPipeline:
                 },
             )
 
+    def _should_use_agent_mode(self, *, log_reason: bool = False) -> bool:
+        """Return True when this stock should run through the agent path."""
+        config = getattr(self, "config", None)
+        if config is None:
+            return False
+
+        use_agent = getattr(config, "agent_mode", False)
+        if not use_agent:
+            configured_skills = getattr(config, "agent_skills", [])
+            if configured_skills and configured_skills != ['all']:
+                use_agent = True
+                if log_reason:
+                    logger.info(
+                        "Auto-enabled agent mode due to configured skills: %s",
+                        configured_skills,
+                    )
+        return use_agent
+
     def fetch_and_save_stock_data(
         self, 
         code: str,
@@ -206,6 +226,24 @@ class StockAnalysisPipeline:
             target_date = self._resolve_resume_target_date(
                 code, current_time=current_time
             )
+
+            if self._should_use_agent_mode():
+                cached, history_source = ensure_min_history_cached(
+                    code,
+                    AGENT_HISTORY_BASELINE_DAYS,
+                    target_date=target_date,
+                    force_refresh=force_refresh,
+                )
+                if cached:
+                    logger.info(
+                        "%s(%s) Agent 历史数据已就绪（目标深度=%d，来源=%s）",
+                        stock_name,
+                        code,
+                        AGENT_HISTORY_BASELINE_DAYS,
+                        history_source,
+                    )
+                    return True, None
+                return False, f"历史K线缓存准备失败: {history_source}"
 
             # 断点续传检查：如果最新可复用交易日的数据已存在，则跳过
             if not force_refresh and self.db.has_today_data(code, target_date):
@@ -301,13 +339,7 @@ class StockAnalysisPipeline:
             # config.is_agent_available() so that users who only configured an
             # API Key for the traditional analysis path are not silently
             # switched to Agent mode (which is slower and more expensive).
-            use_agent = getattr(self.config, 'agent_mode', False)
-            if not use_agent:
-                # Auto-enable agent mode when specific skills are configured (e.g., scheduled task with strategy)
-                configured_skills = getattr(self.config, 'agent_skills', [])
-                if configured_skills and configured_skills != ['all']:
-                    use_agent = True
-                    logger.info(f"{stock_name}({code}) Auto-enabled agent mode due to configured skills: {configured_skills}")
+            use_agent = self._should_use_agent_mode(log_reason=True)
 
             self._emit_progress(32, f"{stock_name}：正在聚合基本面与趋势数据")
 

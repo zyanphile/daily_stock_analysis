@@ -734,6 +734,18 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         self.assertTrue(response["success"])
         mock_reload_runtime_singletons.assert_called_once()
 
+    @patch("src.search_service.reset_search_service")
+    @patch("src.agent.tools.data_tools.reset_fetcher_manager")
+    def test_reload_runtime_singletons_resets_history_cache_and_search_service(
+        self,
+        mock_reset_fetcher_manager,
+        mock_reset_search_service,
+    ) -> None:
+        SystemConfigService._reload_runtime_singletons()
+
+        mock_reset_fetcher_manager.assert_called_once_with()
+        mock_reset_search_service.assert_called_once_with()
+
     def test_update_with_reload_applies_updated_env_file_when_process_env_is_stale(self) -> None:
         os.environ["STOCK_LIST"] = "600519,000001"
 
@@ -810,7 +822,6 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         self.assertIn("不会自动重建 scheduler", schedule_warning)
         self.assertIn("以 schedule 模式重新启动后生效", schedule_warning)
         self.assertNotIn("它属于启动期单次运行配置", schedule_warning)
-
 
     def test_validate_rejects_comma_only_api_key(self) -> None:
         """Whitespace/comma-only api_key must fail validation (P2: parsed-segment check)."""
