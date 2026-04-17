@@ -5,6 +5,7 @@ import asyncio
 import importlib.util
 import logging
 import sys
+from datetime import date, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -180,3 +181,44 @@ def test_pipeline_trend_lookup_normalizes_prefixed_stock_code():
 
     first_call = pipeline.db.get_data_range.call_args_list[0]
     assert first_call.args[0] == "600519"
+
+
+def test_pipeline_trend_lookup_prefers_more_complete_original_bucket():
+    pipeline = _make_pipeline(enable_realtime_quote=False, realtime_quote=None)
+    pipeline.config.agent_mode = True
+    pipeline._analyze_with_agent = MagicMock(return_value=None)
+    pipeline.trend_analyzer.analyze.return_value = SimpleNamespace(
+        trend_status=SimpleNamespace(value="震荡"),
+        buy_signal=SimpleNamespace(value="观望"),
+        signal_score=60,
+    )
+
+    def _make_bars(code: str, count: int, *, end_date: date):
+        bars = []
+        for idx in range(count):
+            current_date = end_date - timedelta(days=count - idx - 1)
+            close = 100 + idx
+            bar = MagicMock()
+            bar.date = current_date
+            bar.to_dict.return_value = {
+                "date": current_date,
+                "open": close - 1,
+                "high": close + 1,
+                "low": close - 2,
+                "close": close,
+                "volume": 1000.0,
+            }
+            bars.append(bar)
+        return bars
+
+    pipeline.db.get_data_range.side_effect = [
+        _make_bars("600519", 10, end_date=date(2026, 4, 16)),
+        _make_bars("SH600519", 60, end_date=date(2026, 4, 16)),
+    ]
+
+    pipeline.analyze_stock("SH600519", ReportType.SIMPLE, "q1")
+
+    analyze_call = pipeline.trend_analyzer.analyze.call_args
+    assert len(analyze_call.args[0]) == 60
+    assert pipeline.db.get_data_range.call_args_list[0].args[0] == "600519"
+    assert pipeline.db.get_data_range.call_args_list[1].args[0] == "SH600519"

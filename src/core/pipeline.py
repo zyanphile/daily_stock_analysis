@@ -381,8 +381,20 @@ class StockAnalysisPipeline:
                 end_date = get_market_now(_mkt).date()
                 start_date = end_date - timedelta(days=89)  # ~60 trading days for MA60
                 historical_bars = self.db.get_data_range(normalized_code, start_date, end_date)
-                if not historical_bars and normalized_code != code:
-                    historical_bars = self.db.get_data_range(code, start_date, end_date)
+                if normalized_code != code:
+                    original_bars = self.db.get_data_range(code, start_date, end_date)
+                    normalized_rank = (
+                        (getattr(historical_bars[-1], "date", None) or date.min)
+                        if historical_bars else date.min,
+                        len(historical_bars),
+                    )
+                    original_rank = (
+                        (getattr(original_bars[-1], "date", None) or date.min)
+                        if original_bars else date.min,
+                        len(original_bars),
+                    )
+                    if original_rank > normalized_rank:
+                        historical_bars = original_bars
                 if historical_bars:
                     df = pd.DataFrame([bar.to_dict() for bar in historical_bars])
                     # Issue #234: Augment with realtime for intraday MA calculation
