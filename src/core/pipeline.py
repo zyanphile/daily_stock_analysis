@@ -18,7 +18,7 @@ import uuid
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from typing import List, Dict, Any, Optional, Tuple, Callable
 
 import pandas as pd
@@ -26,7 +26,7 @@ import pandas as pd
 from src.config import get_config, Config
 from src.storage import get_db
 from data_provider import DataFetcherManager
-from data_provider.base import canonical_stock_code, normalize_stock_code
+from data_provider.base import normalize_stock_code
 from data_provider.realtime_types import ChipDistribution
 from src.analyzer import GeminiAnalyzer, AnalysisResult, fill_chip_structure_if_needed, fill_price_position_if_needed
 from src.notification import NotificationService, NotificationChannel
@@ -39,7 +39,7 @@ from src.services.social_sentiment_service import SocialSentimentService
 from src.services.stock_history_cache import (
     AGENT_HISTORY_BASELINE_DAYS,
     ensure_min_history_cached,
-    rank_history_bars,
+    load_recent_bars_from_db,
     reset_agent_frozen_target_date,
     reset_candidate_pick_cache,
     set_agent_frozen_target_date,
@@ -396,17 +396,19 @@ class StockAnalysisPipeline:
             # Step 3: 趋势分析（基于交易理念）— 在 Agent 分支之前执行，供两条路径共用
             trend_result: Optional[TrendAnalysisResult] = None
             try:
-                normalized_code = canonical_stock_code(normalize_stock_code(code))
                 end_date = self._resolve_resume_target_date(
                     code,
                     current_time=current_time,
                 )
-                start_date = end_date - timedelta(days=89)  # ~60 trading days for MA60
-                historical_bars = self.db.get_data_range(normalized_code, start_date, end_date)
-                if normalized_code != code:
-                    original_bars = self.db.get_data_range(code, start_date, end_date)
-                    if rank_history_bars(original_bars) > rank_history_bars(historical_bars):
-                        historical_bars = original_bars
+                # 复用 stock_history_cache 的 4-candidate rank 选桶策略，与
+                # agent 路径 `load_recent_history_df` 保持完全一致，避免同一只
+                # 股票在两条路径上选到不同 storage_code 分区、trend_result 与
+                # agent 所见历史不对齐。~60 个交易日足以覆盖 MA60。
+                historical_bars, _source, _storage_code = load_recent_bars_from_db(
+                    code,
+                    days=60,
+                    target_date=end_date,
+                )
                 if historical_bars:
                     latest_bar_date = getattr(historical_bars[-1], "date", None)
                     if latest_bar_date is None or latest_bar_date < end_date:

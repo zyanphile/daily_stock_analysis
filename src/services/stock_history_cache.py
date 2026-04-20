@@ -232,17 +232,54 @@ def _get_attempt_lock(attempt_key: Tuple[str, date]) -> Lock:
         return attempt_lock
 
 
-def _load_recent_bars_from_db(
+def load_recent_bars_from_db(
     stock_code: str,
     days: int,
     target_date: Optional[date] = None,
 ) -> Tuple[List[object], str, str]:
+    """Return the best-ranking recent history bars across all candidate codes.
+
+    This is the single source of truth for "pick the freshest / deepest
+    DB-backed bars for ``stock_code``". Both agent-facing readers (via
+    :func:`load_recent_history_df`) and pipeline's trend-analysis Step 3
+    call into this function so their candidate-picking semantics stay in
+    lockstep (4-candidate rank via :func:`rank_history_bars`).
+
+    The same per-analysis candidate-pick cache (installed by
+    :func:`set_candidate_pick_cache` during :func:`_analyze_with_agent`) is
+    consulted here to avoid re-ranking the same ``(canonical_code, target_date,
+    days)`` tuple multiple times within a single agent analysis.
+    """
     db = get_db()
     requested_days = _normalize_days(days)
-    resolved_target = _resolve_target_date(target_date)
+    # 与 `_ensure_min_history_cached_with_bars` 里 save-后失效用的 key 保持
+    # 对称：两边都走 `_resolve_expected_target_date`（explicit > ContextVar >
+    # trading_calendar fallback），避免未来 target_date=None + Agent
+    # ContextVar 场景下缓存 key 和失效 key 错位（见 #1066 follow-up P2）。
+    resolved_target = _resolve_expected_target_date(stock_code, target_date)
+
+    # Per-analysis candidate cache lookup. Key on canonical code + resolved
+    # target date so different days within the same target date can reuse
+    # the "which candidate code won" decision (but the bars list itself still
+    # reflects the request's ``requested_days`` trim on the wins).
+    canonical_code = _normalize_cache_code(stock_code)
+    cache = get_candidate_pick_cache()
+    cache_key: Optional[Tuple[str, date]] = None
+    if cache is not None:
+        cache_key = (canonical_code, resolved_target)
+        cached_entry = cache.get(cache_key)
+        if cached_entry is not None:
+            cached_bars, cached_source, cached_code = cached_entry
+            # Honour the current call's requested_days trim on a shared bars
+            # snapshot; callers with smaller days do not need a re-rank.
+            if len(cached_bars) > requested_days:
+                trimmed = list(cached_bars[-requested_days:])
+            else:
+                trimmed = list(cached_bars)
+            return trimmed, cached_source, cached_code
 
     best_bars: List[object] = []
-    best_code = _normalize_cache_code(stock_code)
+    best_code = canonical_code
 
     for code in _candidate_codes(stock_code):
         try:
@@ -263,7 +300,15 @@ def _load_recent_bars_from_db(
             best_bars = list(bars)
             best_code = code
 
-    return best_bars, _infer_source(best_bars), best_code
+    result_source = _infer_source(best_bars)
+    if cache is not None and cache_key is not None:
+        cache[cache_key] = (list(best_bars), result_source, best_code)
+    return best_bars, result_source, best_code
+
+
+# Legacy alias: keep the private-looking name so callers that imported it
+# (tests, older internal references) keep working without churn.
+_load_recent_bars_from_db = load_recent_bars_from_db
 
 
 def resolve_history_storage_code(
@@ -313,15 +358,22 @@ def reset_shared_history_runtime() -> None:
         _history_fetch_locks.clear()
 
 
-def ensure_min_history_cached(
+def _ensure_min_history_cached_with_bars(
     stock_code: str,
     days: int = AGENT_HISTORY_BASELINE_DAYS,
     *,
     target_date: Optional[date] = None,
     fetcher_manager=None,
     force_refresh: bool = False,
-) -> Tuple[bool, str]:
-    """Ensure the requested history depth is cached in ``stock_daily``."""
+) -> Tuple[bool, str, List[object]]:
+    """Internal variant of :func:`ensure_min_history_cached` that also returns
+    the persisted bars list on the hot success path.
+
+    The public :func:`ensure_min_history_cached` keeps its historical
+    ``Tuple[bool, str]`` signature (so external callers and tests do not change),
+    while :func:`load_recent_history_df` and other internal hot paths consume
+    this 3-tuple to save a redundant ``_load_recent_bars_from_db`` round-trip.
+    """
     requested_days = _normalize_days(days)
     fetch_days = max(requested_days, AGENT_HISTORY_BASELINE_DAYS)
     canonical_code = _normalize_cache_code(stock_code)
@@ -336,9 +388,9 @@ def ensure_min_history_cached(
     attempt_state = _get_attempt_state(attempt_key)
     if not force_refresh:
         if _has_sufficient_history(existing_bars, requested_days, expected_target_date):
-            return True, existing_source
+            return True, existing_source, existing_bars
         if attempt_state.attempted_days >= requested_days and attempt_state.last_error:
-            return False, attempt_state.last_error
+            return False, attempt_state.last_error, existing_bars
 
     attempt_lock = _get_attempt_lock(attempt_key)
     with attempt_lock:
@@ -350,9 +402,9 @@ def ensure_min_history_cached(
         attempt_state = _get_attempt_state(attempt_key)
         if not force_refresh:
             if _has_sufficient_history(existing_bars, requested_days, expected_target_date):
-                return True, existing_source
+                return True, existing_source, existing_bars
             if attempt_state.attempted_days >= requested_days and attempt_state.last_error:
-                return False, attempt_state.last_error
+                return False, attempt_state.last_error, existing_bars
 
         manager = fetcher_manager if fetcher_manager is not None else get_shared_fetcher_manager()
         fetch_code = canonical_code or (stock_code or "").strip()
@@ -372,7 +424,7 @@ def ensure_min_history_cached(
                 fetch_days,
                 exc,
             )
-            return False, error_message
+            return False, error_message, existing_bars
 
         if df is None or df.empty:
             error_message = f"No historical data available for {stock_code}"
@@ -381,7 +433,7 @@ def ensure_min_history_cached(
                 attempted_days=fetch_days,
                 last_error=error_message,
             )
-            return False, error_message
+            return False, error_message, existing_bars
 
         save_code = canonical_code or storage_code or fetch_code
         try:
@@ -399,7 +451,14 @@ def ensure_min_history_cached(
                 fetch_days,
                 exc,
             )
-            return False, error_message
+            return False, error_message, existing_bars
+
+        # Fresh data was just persisted; drop any cached candidate-pick entries
+        # for the current target date so the post-save re-read reflects the new
+        # bars instead of the pre-save snapshot.
+        pick_cache = get_candidate_pick_cache()
+        if pick_cache is not None:
+            pick_cache.pop((canonical_code, expected_target_date), None)
 
         persisted_bars, persisted_source, _persisted_storage_code = _load_recent_bars_from_db(
             stock_code,
@@ -421,7 +480,7 @@ def ensure_min_history_cached(
                 requested_days,
                 save_code,
             )
-            return True, persisted_source or source_name
+            return True, persisted_source or source_name, persisted_bars
 
         latest_bar_date = _get_latest_bar_date(persisted_bars)
         if latest_bar_date is None:
@@ -437,10 +496,14 @@ def ensure_min_history_cached(
                 f"(got={persisted_days}, need>={requested_days})"
             )
 
+        # 与 "fetch 失败" / "save 失败" 分支保持一致的语义：持久化校验失败时
+        # `last_error` 必须记录实际错误信息，否则后续同一 attempt_key 的请求会
+        # 因 `attempt_state.last_error is None` 而无限次重放补抓（即 #1066 里
+        # "同一 attempt 45 次 HTTP" 的表面现象）。
         _record_attempt(
             attempt_key,
             attempted_days=fetch_days,
-            last_error=None,
+            last_error=error_message,
         )
         logger.warning(
             "ensure_min_history_cached(%s): cached history is not ready after refresh "
@@ -453,7 +516,31 @@ def ensure_min_history_cached(
             source_name,
             save_code,
         )
-        return False, error_message
+        return False, error_message, persisted_bars
+
+
+def ensure_min_history_cached(
+    stock_code: str,
+    days: int = AGENT_HISTORY_BASELINE_DAYS,
+    *,
+    target_date: Optional[date] = None,
+    fetcher_manager=None,
+    force_refresh: bool = False,
+) -> Tuple[bool, str]:
+    """Ensure the requested history depth is cached in ``stock_daily``.
+
+    Thin wrapper over :func:`_ensure_min_history_cached_with_bars` that drops
+    the bars payload so the public ``Tuple[bool, str]`` signature remains
+    backward compatible.
+    """
+    ok, source_or_error, _bars = _ensure_min_history_cached_with_bars(
+        stock_code,
+        days,
+        target_date=target_date,
+        fetcher_manager=fetcher_manager,
+        force_refresh=force_refresh,
+    )
+    return ok, source_or_error
 
 
 def load_recent_history_df(
@@ -467,19 +554,15 @@ def load_recent_history_df(
     """Load recent history from DB, backfilling from the shared fetcher when needed."""
     requested_days = _normalize_days(days)
     expected_target_date = _resolve_expected_target_date(stock_code, target_date)
-    cached, source_name = ensure_min_history_cached(
+    cached, source_name, bars = _ensure_min_history_cached_with_bars(
         stock_code,
         requested_days,
         target_date=target_date,
         fetcher_manager=fetcher_manager,
         force_refresh=force_refresh,
     )
+    db_source = _infer_source(bars) if bars else source_name
 
-    bars, db_source, _storage_code = _load_recent_bars_from_db(
-        stock_code,
-        requested_days,
-        target_date=target_date,
-    )
     if not bars:
         return pd.DataFrame(), db_source if cached else source_name
 
