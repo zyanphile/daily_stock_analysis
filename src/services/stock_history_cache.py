@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -20,6 +21,56 @@ AGENT_HISTORY_BASELINE_DAYS = 240
 
 _shared_fetcher_manager = None
 _shared_fetcher_manager_lock = Lock()
+
+# Agent 路径下 pipeline 冻结的目标交易日。由 `_analyze_with_agent` 在进入时 set、
+# 退出时 reset，tool handler 通过 `get_agent_frozen_target_date()` 读取后
+# 透传给 `load_recent_history_df(..., target_date=...)`，确保同一次 Agent 分析
+# 在跨收盘边界场景下始终以 pipeline 冻结的 T 日作为预期交易日，而不是 tool 调用
+# 时的墙钟。
+_agent_frozen_target_date: contextvars.ContextVar[Optional[date]] = contextvars.ContextVar(
+    "agent_frozen_target_date", default=None
+)
+
+# 同一次 Agent 分析内多个 tool 反复枚举 `_candidate_codes` + 4-candidate rank
+# 的结果缓存。作用域与 `_agent_frozen_target_date` 对齐，由同一个 try/finally 负责
+# set 空 dict / reset，跨 pipeline 运行通过 ContextVar 天然隔离，异常退出也能
+# 自动释放。
+_CandidatePickCacheType = Dict[Tuple[str, date], Tuple[List[object], str, str]]
+_candidate_pick_cache: contextvars.ContextVar[Optional[_CandidatePickCacheType]] = (
+    contextvars.ContextVar("candidate_pick_cache", default=None)
+)
+
+
+def set_agent_frozen_target_date(target_date: Optional[date]) -> contextvars.Token:
+    """Set pipeline-frozen target date for the current (agent) context."""
+    return _agent_frozen_target_date.set(target_date)
+
+
+def reset_agent_frozen_target_date(token: contextvars.Token) -> None:
+    """Reset the frozen target date ContextVar to its previous state."""
+    _agent_frozen_target_date.reset(token)
+
+
+def get_agent_frozen_target_date() -> Optional[date]:
+    """Return the pipeline-frozen target date for the current context, or None."""
+    return _agent_frozen_target_date.get()
+
+
+def set_candidate_pick_cache(
+    cache: Optional[_CandidatePickCacheType],
+) -> contextvars.Token:
+    """Install a per-analysis candidate-pick cache in the current context."""
+    return _candidate_pick_cache.set(cache)
+
+
+def reset_candidate_pick_cache(token: contextvars.Token) -> None:
+    """Reset the candidate-pick cache ContextVar to its previous state."""
+    _candidate_pick_cache.reset(token)
+
+
+def get_candidate_pick_cache() -> Optional[_CandidatePickCacheType]:
+    """Return the per-analysis candidate-pick cache, or None if not installed."""
+    return _candidate_pick_cache.get()
 
 
 @dataclass
@@ -115,6 +166,10 @@ def rank_history_bars(bars: List[object]) -> Tuple[date, int]:
 def _resolve_expected_target_date(stock_code: str, target_date: Optional[date] = None) -> date:
     if target_date is not None:
         return target_date
+
+    frozen = get_agent_frozen_target_date()
+    if frozen is not None:
+        return frozen
 
     try:
         from src.core.trading_calendar import get_effective_trading_date, get_market_for_stock
