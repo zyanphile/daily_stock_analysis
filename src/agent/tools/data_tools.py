@@ -15,9 +15,10 @@ from typing import Optional
 
 from src.agent.tools.registry import ToolParameter, ToolDefinition
 from src.services.stock_history_cache import (
+    _candidate_codes,
+    get_agent_frozen_target_date,
     get_shared_fetcher_manager,
     load_recent_history_df,
-    resolve_history_storage_code,
     reset_shared_history_runtime,
 )
 
@@ -223,7 +224,10 @@ get_realtime_quote_tool = ToolDefinition(
 
 def _handle_get_daily_history(stock_code: str, days: int = 60) -> dict:
     """Get daily OHLCV history data."""
-    df, source = load_recent_history_df(stock_code, days=days)
+    frozen_target_date = get_agent_frozen_target_date()
+    df, source = load_recent_history_df(
+        stock_code, days=days, target_date=frozen_target_date
+    )
 
     if df is None or df.empty:
         return {"error": f"No historical data available for {stock_code}"}
@@ -317,10 +321,15 @@ get_chip_distribution_tool = ToolDefinition(
 def _handle_get_analysis_context(stock_code: str) -> dict:
     """Get stored analysis context from database."""
     db = _get_db()
-    resolved_code = resolve_history_storage_code(stock_code, days=2)
-    context = db.get_analysis_context(resolved_code)
-    if context is None and resolved_code != stock_code:
-        context = db.get_analysis_context(stock_code)
+    # 直接在 `_candidate_codes` 产出的候选序列上做顺序查询（canonical 优先、
+    # legacy fallback），命中即返回。相比旧实现先用 `resolve_history_storage_code`
+    # 探一次 daily 表再查 context 表，减少一次 DB 往返；同时对只写过 legacy code
+    # 的历史数据保持向后兼容。
+    context = None
+    for candidate in _candidate_codes(stock_code):
+        context = db.get_analysis_context(candidate)
+        if context is not None:
+            break
 
     if context is None:
         return {"error": f"No analysis context in DB for {stock_code}"}

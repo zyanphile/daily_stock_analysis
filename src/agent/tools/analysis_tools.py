@@ -10,7 +10,10 @@ import logging
 from typing import Optional
 
 from src.agent.tools.registry import ToolParameter, ToolDefinition
-from src.services.stock_history_cache import load_recent_history_df
+from src.services.stock_history_cache import (
+    get_agent_frozen_target_date,
+    load_recent_history_df,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +25,8 @@ def _fetch_trend_data(stock_code: str):
     code = canonical_stock_code(stock_code)
     if not code:
         return None
-    df, source = load_recent_history_df(code, days=90)
+    frozen_target_date = get_agent_frozen_target_date()
+    df, source = load_recent_history_df(code, days=90, target_date=frozen_target_date)
     if df is not None and not df.empty:
         logger.debug("analyze_trend(%s): loaded %d rows via %s", stock_code, len(df), source)
         return df
@@ -112,7 +116,10 @@ analyze_trend_tool = ToolDefinition(
 
 def _handle_calculate_ma(stock_code: str, periods: Optional[str] = None, days: int = 120) -> dict:
     """Calculate moving averages for arbitrary periods from historical K-line data."""
-    df, source = load_recent_history_df(stock_code, days=days)
+    frozen_target_date = get_agent_frozen_target_date()
+    df, source = load_recent_history_df(
+        stock_code, days=days, target_date=frozen_target_date
+    )
 
     if df is None or df.empty:
         return {"error": f"No historical data for {stock_code}"}
@@ -203,7 +210,10 @@ def _handle_get_volume_analysis(stock_code: str, days: int = 30) -> dict:
     """Analyse volume-price patterns over recent trading days."""
     import pandas as pd
 
-    df, source = load_recent_history_df(stock_code, days=max(days + 20, 60))
+    frozen_target_date = get_agent_frozen_target_date()
+    df, source = load_recent_history_df(
+        stock_code, days=max(days + 20, 60), target_date=frozen_target_date
+    )
 
     if df is None or df.empty:
         return {"error": f"No historical data for {stock_code}"}
@@ -315,7 +325,10 @@ get_volume_analysis_tool = ToolDefinition(
 
 def _handle_analyze_pattern(stock_code: str, days: int = 60) -> dict:
     """Detect common candlestick and chart patterns in recent price history."""
-    df, source = load_recent_history_df(stock_code, days=max(days, 120))
+    frozen_target_date = get_agent_frozen_target_date()
+    df, source = load_recent_history_df(
+        stock_code, days=max(days, 120), target_date=frozen_target_date
+    )
 
     if df is None or df.empty:
         return {"error": f"No historical data for {stock_code}"}
